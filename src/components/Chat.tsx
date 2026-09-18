@@ -54,11 +54,17 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     // Only show users we're connected with
     const connectedUsers = allUsers.filter(u => areUsersConnected(currentUser.id, u.id));
     setContacts(connectedUsers);
+
+    // Only auto-select if no contact is currently selected
     if (!selectedContact && connectedUsers.length > 0) {
       setSelectedContact(connectedUsers[0]);
-    } else if (selectedContact) {
-      const stillExists = connectedUsers.find(u => u.id === selectedContact.id);
-      if (!stillExists) {
+    }
+    // If a contact IS selected, keep it even if not in connected list
+    // (user might be viewing a searched user to send a request)
+    // Only clear if the user was completely deleted from the system
+    if (selectedContact) {
+      const userStillExists = allUsers.find(u => u.id === selectedContact.id);
+      if (!userStillExists) {
         setSelectedContact(connectedUsers.length > 0 ? connectedUsers[0] : null);
       }
     }
