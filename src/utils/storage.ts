@@ -1,8 +1,9 @@
-import { User, Message } from '../types';
+import { User, Message, ChatRequest } from '../types';
 
-const USERS_KEY = 'chatapp_users';
-const MESSAGES_KEY = 'chatapp_messages';
-const CURRENT_USER_KEY = 'chatapp_current_user';
+const USERS_KEY = 'laxchat_users';
+const MESSAGES_KEY = 'laxchat_messages';
+const REQUESTS_KEY = 'laxchat_requests';
+const CURRENT_USER_KEY = 'laxchat_current_user';
 
 // ---- Users ----
 export function getUsers(): User[] {
@@ -18,6 +19,15 @@ export function addUser(user: User) {
   const users = getUsers();
   users.push(user);
   saveUsers(users);
+}
+
+export function updateUser(updatedUser: User) {
+  const users = getUsers();
+  const idx = users.findIndex(u => u.id === updatedUser.id);
+  if (idx !== -1) {
+    users[idx] = updatedUser;
+    saveUsers(users);
+  }
 }
 
 export function getUserById(id: string): User | undefined {
@@ -66,17 +76,95 @@ export function getConversation(userId1: string, userId2: string): Message[] {
   );
 }
 
+// Mark messages as seen
+export function markMessagesAsSeen(receiverId: string, senderId: string) {
+  const messages = getMessages();
+  let changed = false;
+  messages.forEach(m => {
+    if (m.senderId === senderId && m.receiverId === receiverId && m.status !== 'seen') {
+      m.status = 'seen';
+      changed = true;
+    }
+  });
+  if (changed) {
+    saveMessages(messages);
+  }
+}
+
+// ---- Chat Requests ----
+export function getRequests(): ChatRequest[] {
+  const data = localStorage.getItem(REQUESTS_KEY);
+  return data ? JSON.parse(data) : [];
+}
+
+export function saveRequests(requests: ChatRequest[]) {
+  localStorage.setItem(REQUESTS_KEY, JSON.stringify(requests));
+}
+
+export function getChatRequest(fromUserId: string, toUserId: string): ChatRequest | undefined {
+  return getRequests().find(
+    r => r.fromUserId === fromUserId && r.toUserId === toUserId
+  );
+}
+
+export function getChatRequestBetween(userId1: string, userId2: string): ChatRequest | undefined {
+  return getRequests().find(
+    r =>
+      (r.fromUserId === userId1 && r.toUserId === userId2) ||
+      (r.fromUserId === userId2 && r.toUserId === userId1)
+  );
+}
+
+export function createChatRequest(fromUserId: string, toUserId: string): ChatRequest {
+  const existing = getChatRequest(fromUserId, toUserId);
+  if (existing) return existing;
+
+  const request: ChatRequest = {
+    id: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    fromUserId,
+    toUserId,
+    status: 'pending',
+    timestamp: Date.now(),
+  };
+  const requests = getRequests();
+  requests.push(request);
+  saveRequests(requests);
+  return request;
+}
+
+export function updateChatRequest(requestId: string, status: 'accepted' | 'rejected') {
+  const requests = getRequests();
+  const req = requests.find(r => r.id === requestId);
+  if (req) {
+    req.status = status;
+    saveRequests(requests);
+  }
+}
+
+export function areUsersConnected(userId1: string, userId2: string): boolean {
+  const req = getChatRequestBetween(userId1, userId2);
+  return req?.status === 'accepted';
+}
+
+export function getPendingRequestsForUser(userId: string): ChatRequest[] {
+  return getRequests().filter(r => r.toUserId === userId && r.status === 'pending');
+}
+
+export function getSentRequestsForUser(userId: string): ChatRequest[] {
+  return getRequests().filter(r => r.fromUserId === userId && r.status === 'pending');
+}
+
 // ---- BroadcastChannel for real-time sync ----
 let channel: BroadcastChannel | null = null;
 
 export function getChannel(): BroadcastChannel {
   if (!channel) {
-    channel = new BroadcastChannel('chatapp_sync');
+    channel = new BroadcastChannel('laxchat_sync');
   }
   return channel;
 }
 
-export function broadcastUpdate(type: 'message' | 'user' | 'logout') {
+export function broadcastUpdate(type: 'message' | 'user' | 'logout' | 'request' | 'seen') {
   getChannel().postMessage({ type, timestamp: Date.now() });
 }
 
@@ -86,10 +174,14 @@ export function onBroadcast(callback: (data: { type: string; timestamp: number }
   return () => { ch.onmessage = null; };
 }
 
-// Also listen to storage events for cross-tab sync
 export function onStorageChange(callback: () => void) {
   const handler = (e: StorageEvent) => {
-    if (e.key === MESSAGES_KEY || e.key === USERS_KEY || e.key === CURRENT_USER_KEY) {
+    if (
+      e.key === MESSAGES_KEY ||
+      e.key === USERS_KEY ||
+      e.key === CURRENT_USER_KEY ||
+      e.key === REQUESTS_KEY
+    ) {
       callback();
     }
   };

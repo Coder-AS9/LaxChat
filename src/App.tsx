@@ -16,12 +16,7 @@ export default function App() {
     }
     setLoading(false);
 
-    // Listen for logout from other tabs
-    const unsubBroadcast = onBroadcast((data) => {
-      if (data.type === 'logout') {
-        // Another tab logged out - we don't force logout here
-      }
-    });
+    const unsubBroadcast = onBroadcast(() => {});
 
     const unsubStorage = onStorageChange(() => {
       const updatedUser = getCurrentUser();
@@ -45,12 +40,16 @@ export default function App() {
     setCurrentUserState(null);
   };
 
+  const handleUserUpdate = (user: User) => {
+    setCurrentUserState(user);
+  };
+
   if (loading) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
+      <div className="h-screen w-full flex items-center justify-center bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500">
         <div className="text-center">
           <div className="text-5xl mb-4 animate-bounce">💬</div>
-          <p className="text-white text-lg font-medium">Loading ChatApp...</p>
+          <p className="text-white text-lg font-medium">Loading LaxChat...</p>
         </div>
       </div>
     );
@@ -60,5 +59,11 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  return <Chat currentUser={currentUser} onLogout={handleLogout} />;
+  return (
+    <Chat
+      currentUser={currentUser}
+      onLogout={handleLogout}
+      onUserUpdate={handleUserUpdate}
+    />
+  );
 }
