@@ -286,9 +286,9 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     return msgs[msgs.length - 1].timestamp;
   };
 
-  // When searching, show ALL users (so you can find new people to connect with)
+  // When searching (min 3 chars), show ALL users (so you can find new people to connect with)
   // When not searching, only show connected users
-  const filteredContacts = searchQuery.trim()
+  const filteredContacts = searchQuery.trim().length >= 3
     ? getUsers().filter(u =>
         u.id !== currentUser.id &&
         u.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -440,7 +440,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
           <div className="relative">
             <input
               type="text"
-              placeholder="Search users..."
+              placeholder="Search users (min 3 chars)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full px-4 py-2 pl-9 rounded-full bg-gray-100 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
@@ -455,10 +455,16 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         <div className="flex-1 overflow-y-auto">
           {filteredContacts.length === 0 ? (
             <div className="p-6 text-center">
-              {searchQuery.trim() ? (
+              {searchQuery.trim().length >= 3 ? (
                 <>
                   <div className="text-3xl mb-2">🔍</div>
                   <p className="text-gray-400 text-sm">No users found for "{searchQuery}"</p>
+                </>
+              ) : searchQuery.trim().length > 0 ? (
+                <>
+                  <div className="text-3xl mb-2">⌨️</div>
+                  <p className="text-gray-500 text-sm font-medium">Keep typing...</p>
+                  <p className="text-gray-400 text-xs mt-1">Type at least 3 characters to search</p>
                 </>
               ) : (
                 <>
@@ -472,7 +478,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
             filteredContacts.map(contact => {
               const isConnected = areUsersConnected(currentUser.id, contact.id);
               const req = getChatRequestBetween(currentUser.id, contact.id);
-              const isSearchResult = searchQuery.trim().length > 0;
+              const isSearchResult = searchQuery.trim().length >= 3;
               return (
                 <div
                   key={contact.id}
