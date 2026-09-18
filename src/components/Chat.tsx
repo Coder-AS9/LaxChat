@@ -12,6 +12,7 @@ import {
   createChatRequest,
   getChatRequestBetween,
   updateChatRequest,
+  deleteChatRequest,
   areUsersConnected,
   getPendingRequestsForUser,
   markMessagesAsSeen,
@@ -40,7 +41,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   const [showSettings, setShowSettings] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<ChatRequest[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'pending' | 'rejected' | 'none'>('none');
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'pending' | 'none'>('none');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -110,13 +111,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
       if (!req) {
         setConnectionStatus('none');
       } else if (req.status === 'pending') {
-        if (req.toUserId === currentUser.id) {
-          setConnectionStatus('pending'); // I received the request
-        } else {
-          setConnectionStatus('pending'); // I sent the request
-        }
-      } else if (req.status === 'rejected') {
-        setConnectionStatus('rejected');
+        setConnectionStatus('pending');
       }
     }
   }, [currentUser.id, selectedContact]);
@@ -233,9 +228,11 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   };
 
   const handleRejectRequest = (requestId: string) => {
-    updateChatRequest(requestId, 'rejected');
+    // Just delete the request so sender can resend later
+    deleteChatRequest(requestId);
     broadcastUpdate('request');
     loadPendingRequests();
+    checkConnection();
     setShowNotifications(false);
   };
 
@@ -266,11 +263,8 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     const msgs = getConversation(currentUser.id, contactId);
     if (msgs.length === 0) {
       const req = getChatRequestBetween(currentUser.id, contactId);
-      if (req) {
-        if (req.status === 'pending') {
-          return req.fromUserId === currentUser.id ? '📨 Chat request sent' : '📨 Chat request received';
-        }
-        if (req.status === 'rejected') return '❌ Request rejected';
+      if (req && req.status === 'pending') {
+        return req.fromUserId === currentUser.id ? '📨 Chat request sent' : '📨 Chat request received';
       }
       return 'No messages yet';
     }
@@ -522,9 +516,6 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                       {!isConnected && req?.status === 'pending' && (
                         <span className="text-xs text-amber-500 font-medium">⏳ Pending</span>
                       )}
-                      {!isConnected && req?.status === 'rejected' && (
-                        <span className="text-xs text-red-400 font-medium">❌ Rejected</span>
-                      )}
                       {isConnected && (
                         <p className="text-xs text-gray-500 truncate mt-0.5">{getLastMessage(contact.id)}</p>
                       )}
@@ -592,11 +583,6 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
               {connectionStatus === 'pending' && (
                 <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">
                   ⏳ Pending
-                </span>
-              )}
-              {connectionStatus === 'rejected' && (
-                <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
-                  ❌ Rejected
                 </span>
               )}
             </div>
@@ -684,19 +670,6 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                     </>
                   )}
 
-                  {connectionStatus === 'rejected' && (
-                    <>
-                      <p className="text-gray-500 mt-2 mb-6">
-                        Your chat request was declined. You can try sending again.
-                      </p>
-                      <button
-                        onClick={handleSendRequest}
-                        className="px-6 py-3 bg-indigo-500 text-white rounded-xl font-medium hover:bg-indigo-600 transition-colors shadow-md"
-                      >
-                        🔄 Resend Request
-                      </button>
-                    </>
-                  )}
                 </div>
               </div>
             ) : (

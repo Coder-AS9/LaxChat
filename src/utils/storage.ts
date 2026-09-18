@@ -132,13 +132,26 @@ export function createChatRequest(fromUserId: string, toUserId: string): ChatReq
   return request;
 }
 
-export function updateChatRequest(requestId: string, status: 'accepted' | 'rejected') {
+export function updateChatRequest(requestId: string, status: 'accepted') {
   const requests = getRequests();
   const req = requests.find(r => r.id === requestId);
   if (req) {
     req.status = status;
     saveRequests(requests);
   }
+}
+
+export function deleteChatRequest(requestId: string) {
+  const requests = getRequests().filter(r => r.id !== requestId);
+  saveRequests(requests);
+}
+
+export function deleteChatRequestBetween(userId1: string, userId2: string) {
+  const requests = getRequests().filter(
+    r => !((r.fromUserId === userId1 && r.toUserId === userId2) ||
+           (r.fromUserId === userId2 && r.toUserId === userId1))
+  );
+  saveRequests(requests);
 }
 
 export function areUsersConnected(userId1: string, userId2: string): boolean {

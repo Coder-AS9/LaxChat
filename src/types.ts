@@ -29,6 +29,6 @@ export interface ChatRequest {
   id: string;
   fromUserId: string;
   toUserId: string;
-  status: 'pending' | 'accepted' | 'rejected';
+  status: 'pending' | 'accepted';
   timestamp: number;
 }
