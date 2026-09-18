@@ -5,6 +5,7 @@ export interface User {
   color: string;
   password: string;
   createdAt: number;
+  profileImage?: string; // base64 data URL for uploaded profile picture
 }
 
 export interface Message {

@@ -47,16 +47,18 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Load contacts
+  // Load contacts - only show connected users in sidebar
   const loadContacts = useCallback(() => {
     const allUsers = getUsers().filter(u => u.id !== currentUser.id);
-    setContacts(allUsers);
-    if (!selectedContact && allUsers.length > 0) {
-      setSelectedContact(allUsers[0]);
+    // Only show users we're connected with
+    const connectedUsers = allUsers.filter(u => areUsersConnected(currentUser.id, u.id));
+    setContacts(connectedUsers);
+    if (!selectedContact && connectedUsers.length > 0) {
+      setSelectedContact(connectedUsers[0]);
     } else if (selectedContact) {
-      const stillExists = allUsers.find(u => u.id === selectedContact.id);
+      const stillExists = connectedUsers.find(u => u.id === selectedContact.id);
       if (!stillExists) {
-        setSelectedContact(allUsers.length > 0 ? allUsers[0] : null);
+        setSelectedContact(connectedUsers.length > 0 ? connectedUsers[0] : null);
       }
     }
   }, [currentUser.id, selectedContact]);
@@ -284,9 +286,14 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     return msgs[msgs.length - 1].timestamp;
   };
 
-  const filteredContacts = contacts.filter(c =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // When searching, show ALL users (so you can find new people to connect with)
+  // When not searching, only show connected users
+  const filteredContacts = searchQuery.trim()
+    ? getUsers().filter(u =>
+        u.id !== currentUser.id &&
+        u.name.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : contacts;
 
   // Group messages by date
   const groupedMessages: { date: string; messages: ChatMessage[] }[] = [];
@@ -412,9 +419,17 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
 
           {/* Current User */}
           <div className="flex items-center gap-2 mb-3 px-2">
-            <div className={`w-8 h-8 rounded-full ${currentUser.color} flex items-center justify-center text-sm`}>
-              {currentUser.avatar}
-            </div>
+            {currentUser.profileImage ? (
+              <img
+                src={currentUser.profileImage}
+                alt={currentUser.name}
+                className="w-8 h-8 rounded-full object-cover"
+              />
+            ) : (
+              <div className={`w-8 h-8 rounded-full ${currentUser.color} flex items-center justify-center text-sm`}>
+                {currentUser.avatar}
+              </div>
+            )}
             <div>
               <p className="text-sm font-semibold text-gray-800">{currentUser.name}</p>
               <p className="text-xs text-green-500">● Online</p>
@@ -440,16 +455,24 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         <div className="flex-1 overflow-y-auto">
           {filteredContacts.length === 0 ? (
             <div className="p-6 text-center">
-              <p className="text-gray-400 text-sm">
-                {contacts.length === 0
-                  ? 'No other users yet. Open another tab to register!'
-                  : 'No users match your search'}
-              </p>
+              {searchQuery.trim() ? (
+                <>
+                  <div className="text-3xl mb-2">🔍</div>
+                  <p className="text-gray-400 text-sm">No users found for "{searchQuery}"</p>
+                </>
+              ) : (
+                <>
+                  <div className="text-3xl mb-2">💬</div>
+                  <p className="text-gray-500 text-sm font-medium">No connections yet</p>
+                  <p className="text-gray-400 text-xs mt-1">Search for users above to send chat requests</p>
+                </>
+              )}
             </div>
           ) : (
             filteredContacts.map(contact => {
               const isConnected = areUsersConnected(currentUser.id, contact.id);
               const req = getChatRequestBetween(currentUser.id, contact.id);
+              const isSearchResult = searchQuery.trim().length > 0;
               return (
                 <div
                   key={contact.id}
@@ -464,28 +487,41 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                   }`}
                 >
                   <div className="relative">
-                    <div className={`w-12 h-12 rounded-full ${contact.color} flex items-center justify-center text-xl shadow-sm`}>
-                      {contact.avatar}
-                    </div>
+                    {contact.profileImage ? (
+                      <img
+                        src={contact.profileImage}
+                        alt={contact.name}
+                        className="w-12 h-12 rounded-full object-cover shadow-sm"
+                      />
+                    ) : (
+                      <div className={`w-12 h-12 rounded-full ${contact.color} flex items-center justify-center text-xl shadow-sm`}>
+                        {contact.avatar}
+                      </div>
+                    )}
                     <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-white"></div>
                   </div>
                   <div className="ml-3 flex-1 min-w-0">
                     <div className="flex justify-between items-center">
                       <h3 className="font-semibold text-gray-800 text-sm truncate">{contact.name}</h3>
-                      {getLastMessageTime(contact.id) > 0 && (
+                      {isConnected && getLastMessageTime(contact.id) > 0 && (
                         <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
                           {formatTime(getLastMessageTime(contact.id))}
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-1">
+                      {isSearchResult && !isConnected && (
+                        <span className="text-xs text-indigo-500 font-medium mr-1">🔍 Found</span>
+                      )}
                       {!isConnected && req?.status === 'pending' && (
                         <span className="text-xs text-amber-500 font-medium">⏳ Pending</span>
                       )}
                       {!isConnected && req?.status === 'rejected' && (
                         <span className="text-xs text-red-400 font-medium">❌ Rejected</span>
                       )}
-                      <p className="text-xs text-gray-500 truncate mt-0.5">{getLastMessage(contact.id)}</p>
+                      {isConnected && (
+                        <p className="text-xs text-gray-500 truncate mt-0.5">{getLastMessage(contact.id)}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -497,7 +533,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         {/* Footer info */}
         <div className="p-3 border-t border-gray-100 bg-gray-50">
           <p className="text-xs text-gray-400 text-center">
-            {contacts.length} user{contacts.length !== 1 ? 's' : ''} available
+            {contacts.length} connection{contacts.length !== 1 ? 's' : ''} • Search to find new users
           </p>
         </div>
       </div>
@@ -525,9 +561,17 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                 </svg>
               </button>
 
-              <div className={`w-10 h-10 rounded-full ${selectedContact.color} flex items-center justify-center text-lg shadow-sm`}>
-                {selectedContact.avatar}
-              </div>
+              {selectedContact.profileImage ? (
+                <img
+                  src={selectedContact.profileImage}
+                  alt={selectedContact.name}
+                  className="w-10 h-10 rounded-full object-cover shadow-sm"
+                />
+              ) : (
+                <div className={`w-10 h-10 rounded-full ${selectedContact.color} flex items-center justify-center text-lg shadow-sm`}>
+                  {selectedContact.avatar}
+                </div>
+              )}
               <div className="ml-3 flex-1">
                 <h2 className="font-semibold text-gray-800 text-sm md:text-base">{selectedContact.name}</h2>
                 <p className="text-xs text-green-500">● Online</p>
@@ -556,9 +600,17 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
               /* Chat Request View */
               <div className="flex-1 flex items-center justify-center bg-gradient-to-b from-gray-50 to-gray-100 p-6">
                 <div className="text-center max-w-sm">
-                  <div className={`w-20 h-20 rounded-full ${selectedContact.color} flex items-center justify-center text-4xl mx-auto mb-4 shadow-lg`}>
-                    {selectedContact.avatar}
-                  </div>
+                  {selectedContact.profileImage ? (
+                    <img
+                      src={selectedContact.profileImage}
+                      alt={selectedContact.name}
+                      className="w-20 h-20 rounded-full object-cover mx-auto mb-4 shadow-lg"
+                    />
+                  ) : (
+                    <div className={`w-20 h-20 rounded-full ${selectedContact.color} flex items-center justify-center text-4xl mx-auto mb-4 shadow-lg`}>
+                      {selectedContact.avatar}
+                    </div>
+                  )}
                   <h3 className="text-xl font-bold text-gray-800">{selectedContact.name}</h3>
 
                   {connectionStatus === 'none' && (
@@ -743,12 +795,16 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
             <div className="text-center">
               <div className="text-6xl mb-4">💬</div>
               <h2 className="text-xl font-semibold text-gray-600">Welcome to LaxChat</h2>
-              <p className="text-gray-400 mt-2">Select a user to start chatting</p>
+              <p className="text-gray-400 mt-2">
+                {contacts.length > 0
+                  ? 'Select a connection to start chatting'
+                  : 'Search for users to send chat requests'}
+              </p>
               <button
                 onClick={() => setShowMobileSidebar(true)}
                 className="md:hidden mt-4 px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm"
               >
-                View Users
+                {contacts.length > 0 ? 'View Connections' : 'Find Users'}
               </button>
             </div>
           </div>
@@ -784,7 +840,41 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
   const [name, setName] = useState(currentUser.name);
   const [avatar, setAvatar] = useState(currentUser.avatar);
   const [color, setColor] = useState(currentUser.color);
+  const [profileImage, setProfileImage] = useState<string | undefined>(currentUser.profileImage);
   const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setError('Please select an image file');
+      return;
+    }
+
+    // Validate file size (max 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Image must be smaller than 2MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      setProfileImage(result);
+      setError('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setProfileImage(undefined);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const handleSave = () => {
     if (!name.trim() || name.trim().length < 2) {
@@ -796,6 +886,7 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
       name: name.trim(),
       avatar,
       color,
+      profileImage,
     });
   };
 
@@ -819,9 +910,17 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
         <div className="p-5 space-y-5">
           {/* Preview */}
           <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl">
-            <div className={`w-16 h-16 rounded-full ${color} flex items-center justify-center text-3xl shadow-md`}>
-              {avatar}
-            </div>
+            {profileImage ? (
+              <img
+                src={profileImage}
+                alt="Profile"
+                className="w-16 h-16 rounded-full object-cover shadow-md border-2 border-white"
+              />
+            ) : (
+              <div className={`w-16 h-16 rounded-full ${color} flex items-center justify-center text-3xl shadow-md`}>
+                {avatar}
+              </div>
+            )}
             <div>
               <p className="font-bold text-gray-800 text-lg">{name || 'Your Name'}</p>
               <p className="text-sm text-gray-500">Preview</p>
@@ -842,28 +941,81 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
             />
           </div>
 
-          {/* Avatar */}
+          {/* Profile Picture Upload */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Profile Picture (Avatar)
+              Profile Picture
             </label>
-            <div className="grid grid-cols-8 gap-2 max-h-36 overflow-y-auto p-2 bg-gray-50 rounded-xl">
-              {AVATARS.map((a) => (
+            <div className="space-y-3">
+              {/* Upload button */}
+              <div className="flex gap-2">
                 <button
-                  key={a}
                   type="button"
-                  onClick={() => setAvatar(a)}
-                  className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg transition-all ${
-                    avatar === a
-                      ? 'bg-indigo-100 ring-2 ring-indigo-500 scale-110'
-                      : 'bg-white hover:bg-gray-100 border border-gray-100'
-                  }`}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-indigo-50 border-2 border-dashed border-indigo-200 rounded-xl hover:bg-indigo-100 hover:border-indigo-300 transition-colors"
                 >
-                  {a}
+                  <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-sm font-medium text-indigo-600">Upload from Gallery</span>
                 </button>
-              ))}
+                {profileImage && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100 transition-colors"
+                    title="Remove profile picture"
+                  >
+                    <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+              {profileImage && (
+                <div className="flex items-center gap-3 p-2 bg-green-50 rounded-lg border border-green-100">
+                  <img
+                    src={profileImage}
+                    alt="Selected"
+                    className="w-10 h-10 rounded-full object-cover"
+                  />
+                  <span className="text-sm text-green-700 font-medium">Image selected ✓</span>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Avatar (only show if no profile image) */}
+          {!profileImage && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Or choose an Emoji Avatar
+              </label>
+              <div className="grid grid-cols-8 gap-2 max-h-36 overflow-y-auto p-2 bg-gray-50 rounded-xl">
+                {AVATARS.map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => setAvatar(a)}
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg transition-all ${
+                      avatar === a
+                        ? 'bg-indigo-100 ring-2 ring-indigo-500 scale-110'
+                        : 'bg-white hover:bg-gray-100 border border-gray-100'
+                    }`}
+                  >
+                    {a}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Color */}
           <div>
@@ -888,7 +1040,10 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
 
           {/* Error */}
           {error && (
-            <div className="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg border border-red-100">
+            <div className="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg border border-red-100 flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
               {error}
             </div>
           )}
