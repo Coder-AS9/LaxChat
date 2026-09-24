@@ -42,6 +42,8 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   const [showNotifications, setShowNotifications] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<ChatRequest[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'pending' | 'none'>('none');
+  const [contactStatuses, setContactStatuses] = useState<Record<string, 'connected' | 'pending' | 'none'>>({});
+  const [contactLastMessages, setContactLastMessages] = useState<Record<string, { text: string; time: number }>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -54,15 +56,40 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     const otherUsers = users.filter(u => u.id !== currentUser.id);
     setAllUsers(otherUsers);
 
-    // Load connected users
+    // Load connected users and pre-load all metadata
     const connectedUsers: User[] = [];
+    const statuses: Record<string, 'connected' | 'pending' | 'none'> = {};
+    const lastMessages: Record<string, { text: string; time: number }> = {};
+
     for (const user of otherUsers) {
       const connected = await areUsersConnected(currentUser.id, user.id);
       if (connected) {
         connectedUsers.push(user);
+        statuses[user.id] = 'connected';
+      } else {
+        const req = await getChatRequestBetween(currentUser.id, user.id);
+        if (req && req.status === 'pending') {
+          statuses[user.id] = 'pending';
+        } else {
+          statuses[user.id] = 'none';
+        }
+      }
+
+      // Pre-load last message
+      const msgs = await getConversation(currentUser.id, user.id);
+      if (msgs.length === 0) {
+        lastMessages[user.id] = { text: 'No messages yet', time: 0 };
+      } else {
+        const last = msgs[msgs.length - 1];
+        const prefix = last.senderId === currentUser.id ? 'You: ' : '';
+        const text = last.text.length > 30 ? last.text.substring(0, 30) + '...' : last.text;
+        lastMessages[user.id] = { text: prefix + text, time: last.timestamp };
       }
     }
+
     setContacts(connectedUsers);
+    setContactStatuses(statuses);
+    setContactLastMessages(lastMessages);
 
     // Auto-select first contact if none selected
     if (!selectedContact && connectedUsers.length > 0) {
@@ -245,27 +272,6 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  const getLastMessage = async (contactId: string): Promise<string> => {
-    const msgs = await getConversation(currentUser.id, contactId);
-    if (msgs.length === 0) {
-      const req = await getChatRequestBetween(currentUser.id, contactId);
-      if (req && req.status === 'pending') {
-        return req.fromUserId === currentUser.id ? '📨 Chat request sent' : '📨 Chat request received';
-      }
-      return 'No messages yet';
-    }
-    const last = msgs[msgs.length - 1];
-    const prefix = last.senderId === currentUser.id ? 'You: ' : '';
-    const text = last.text.length > 30 ? last.text.substring(0, 30) + '...' : last.text;
-    return prefix + text;
-  };
-
-  const getLastMessageTime = async (contactId: string): Promise<number> => {
-    const msgs = await getConversation(currentUser.id, contactId);
-    if (msgs.length === 0) return 0;
-    return msgs[msgs.length - 1].timestamp;
-  };
-
   // Filter contacts based on search
   const filteredContacts = searchQuery.trim().length >= 3
     ? allUsers.filter(u => u.name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -328,9 +334,8 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                         No pending requests
                       </div>
                     ) : (
-                      pendingRequests.map(async (req) => {
-                        const users = await getUsers();
-                        const fromUser = users.find(u => u.id === req.fromUserId);
+                      pendingRequests.map((req) => {
+                        const fromUser = allUsers.find(u => u.id === req.fromUserId);
                         if (!fromUser) return null;
                         return (
                           <div key={req.id} className="p-3 border-b border-gray-50 flex items-center gap-3">
@@ -452,12 +457,11 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
               )}
             </div>
           ) : (
-            filteredContacts.map(async (contact) => {
-              const isConnected = await areUsersConnected(currentUser.id, contact.id);
-              const req = await getChatRequestBetween(currentUser.id, contact.id);
+            filteredContacts.map((contact) => {
+              const status = contactStatuses[contact.id] || 'none';
+              const isConnected = status === 'connected';
               const isSearchResult = searchQuery.trim().length >= 3;
-              const lastMsg = await getLastMessage(contact.id);
-              const lastTime = await getLastMessageTime(contact.id);
+              const lastMsgData = contactLastMessages[contact.id] || { text: 'No messages yet', time: 0 };
 
               return (
                 <div
@@ -489,9 +493,9 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                   <div className="ml-3 flex-1 min-w-0">
                     <div className="flex justify-between items-center">
                       <h3 className="font-semibold text-gray-800 text-sm truncate">{contact.name}</h3>
-                      {isConnected && lastTime > 0 && (
+                      {isConnected && lastMsgData.time > 0 && (
                         <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
-                          {formatTime(lastTime)}
+                          {formatTime(lastMsgData.time)}
                         </span>
                       )}
                     </div>
@@ -499,11 +503,11 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                       {isSearchResult && !isConnected && (
                         <span className="text-xs text-indigo-500 font-medium mr-1">🔍 Found</span>
                       )}
-                      {!isConnected && req?.status === 'pending' && (
+                      {!isConnected && status === 'pending' && (
                         <span className="text-xs text-amber-500 font-medium">⏳ Pending</span>
                       )}
                       {isConnected && (
-                        <p className="text-xs text-gray-500 truncate mt-0.5">{lastMsg}</p>
+                        <p className="text-xs text-gray-500 truncate mt-0.5">{lastMsgData.text}</p>
                       )}
                     </div>
                   </div>
