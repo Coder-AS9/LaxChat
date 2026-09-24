@@ -1,47 +1,42 @@
 import { useState, useEffect } from 'react';
 import { User } from './types';
-import { getCurrentUser, setCurrentUser, onBroadcast, onStorageChange } from './utils/storage';
 import Login from './components/Login';
 import Chat from './components/Chat';
+
+// Simple session storage for current user (just for this browser session)
+const SESSION_KEY = 'laxchat_session';
 
 export default function App() {
   const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Check for existing session on mount
   useEffect(() => {
-    const user = getCurrentUser();
-    if (user) {
-      setCurrentUserState(user);
+    // Load user from session storage
+    const sessionData = sessionStorage.getItem(SESSION_KEY);
+    if (sessionData) {
+      try {
+        const user = JSON.parse(sessionData);
+        setCurrentUserState(user);
+      } catch (e) {
+        console.error('Error parsing session:', e);
+      }
     }
     setLoading(false);
-
-    const unsubBroadcast = onBroadcast(() => {});
-
-    const unsubStorage = onStorageChange(() => {
-      const updatedUser = getCurrentUser();
-      if (!updatedUser && currentUser) {
-        setCurrentUserState(null);
-      }
-    });
-
-    return () => {
-      unsubBroadcast();
-      unsubStorage();
-    };
-  }, []); // eslint-disable-line
+  }, []);
 
   const handleLogin = (user: User) => {
     setCurrentUserState(user);
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
     setCurrentUserState(null);
+    sessionStorage.removeItem(SESSION_KEY);
   };
 
   const handleUserUpdate = (user: User) => {
     setCurrentUserState(user);
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
   };
 
   if (loading) {
@@ -60,10 +55,6 @@ export default function App() {
   }
 
   return (
-    <Chat
-      currentUser={currentUser}
-      onLogout={handleLogout}
-      onUserUpdate={handleUserUpdate}
-    />
+    <Chat currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />
   );
 }

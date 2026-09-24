@@ -1,203 +1,354 @@
-import { User, Message, ChatRequest } from '../types';
+import { supabase } from './supabase';
+import type { User, Message, ChatRequest } from '../types';
 
-const USERS_KEY = 'laxchat_users';
-const MESSAGES_KEY = 'laxchat_messages';
-const REQUESTS_KEY = 'laxchat_requests';
-const CURRENT_USER_KEY = 'laxchat_current_user';
+// ============================================
+// USERS
+// ============================================
 
-// ---- Users ----
-export function getUsers(): User[] {
-  const data = localStorage.getItem(USERS_KEY);
-  return data ? JSON.parse(data) : [];
-}
+export async function getUsers(): Promise<User[]> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .order('created_at', { ascending: true });
 
-export function saveUsers(users: User[]) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-export function addUser(user: User) {
-  const users = getUsers();
-  users.push(user);
-  saveUsers(users);
-}
-
-export function updateUser(updatedUser: User) {
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === updatedUser.id);
-  if (idx !== -1) {
-    users[idx] = updatedUser;
-    saveUsers(users);
+  if (error) {
+    console.error('Error fetching users:', error);
+    return [];
   }
+
+  return data || [];
 }
 
-export function getUserById(id: string): User | undefined {
-  return getUsers().find(u => u.id === id);
-}
+export async function addUser(user: Omit<User, 'id' | 'created_at'>): Promise<User | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .insert({
+      name: user.name,
+      avatar: user.avatar,
+      color: user.color,
+      password: user.password,
+      profile_image: user.profileImage || null,
+    })
+    .select()
+    .single();
 
-export function getUserByName(name: string): User | undefined {
-  return getUsers().find(u => u.name.toLowerCase() === name.toLowerCase());
-}
-
-// ---- Current User ----
-export function getCurrentUser(): User | null {
-  const data = localStorage.getItem(CURRENT_USER_KEY);
-  return data ? JSON.parse(data) : null;
-}
-
-export function setCurrentUser(user: User | null) {
-  if (user) {
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(CURRENT_USER_KEY);
+  if (error) {
+    console.error('Error adding user:', error);
+    return null;
   }
+
+  return mapUserFromDB(data);
 }
 
-// ---- Messages ----
-export function getMessages(): Message[] {
-  const data = localStorage.getItem(MESSAGES_KEY);
-  return data ? JSON.parse(data) : [];
-}
+export async function updateUser(updatedUser: User): Promise<boolean> {
+  const { error } = await supabase
+    .from('users')
+    .update({
+      name: updatedUser.name,
+      avatar: updatedUser.avatar,
+      color: updatedUser.color,
+      profile_image: updatedUser.profileImage || null,
+    })
+    .eq('id', updatedUser.id);
 
-export function saveMessages(messages: Message[]) {
-  localStorage.setItem(MESSAGES_KEY, JSON.stringify(messages));
-}
-
-export function addMessage(message: Message) {
-  const messages = getMessages();
-  messages.push(message);
-  saveMessages(messages);
-}
-
-export function getConversation(userId1: string, userId2: string): Message[] {
-  return getMessages().filter(
-    m =>
-      (m.senderId === userId1 && m.receiverId === userId2) ||
-      (m.senderId === userId2 && m.receiverId === userId1)
-  );
-}
-
-// Mark messages as seen
-export function markMessagesAsSeen(receiverId: string, senderId: string) {
-  const messages = getMessages();
-  let changed = false;
-  messages.forEach(m => {
-    if (m.senderId === senderId && m.receiverId === receiverId && m.status !== 'seen') {
-      m.status = 'seen';
-      changed = true;
-    }
-  });
-  if (changed) {
-    saveMessages(messages);
+  if (error) {
+    console.error('Error updating user:', error);
+    return false;
   }
+
+  return true;
 }
 
-// ---- Chat Requests ----
-export function getRequests(): ChatRequest[] {
-  const data = localStorage.getItem(REQUESTS_KEY);
-  return data ? JSON.parse(data) : [];
-}
+export async function getUserById(id: string): Promise<User | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', id)
+    .single();
 
-export function saveRequests(requests: ChatRequest[]) {
-  localStorage.setItem(REQUESTS_KEY, JSON.stringify(requests));
-}
-
-export function getChatRequest(fromUserId: string, toUserId: string): ChatRequest | undefined {
-  return getRequests().find(
-    r => r.fromUserId === fromUserId && r.toUserId === toUserId
-  );
-}
-
-export function getChatRequestBetween(userId1: string, userId2: string): ChatRequest | undefined {
-  return getRequests().find(
-    r =>
-      (r.fromUserId === userId1 && r.toUserId === userId2) ||
-      (r.fromUserId === userId2 && r.toUserId === userId1)
-  );
-}
-
-export function createChatRequest(fromUserId: string, toUserId: string): ChatRequest {
-  const existing = getChatRequest(fromUserId, toUserId);
-  if (existing) return existing;
-
-  const request: ChatRequest = {
-    id: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    fromUserId,
-    toUserId,
-    status: 'pending',
-    timestamp: Date.now(),
-  };
-  const requests = getRequests();
-  requests.push(request);
-  saveRequests(requests);
-  return request;
-}
-
-export function updateChatRequest(requestId: string, status: 'accepted') {
-  const requests = getRequests();
-  const req = requests.find(r => r.id === requestId);
-  if (req) {
-    req.status = status;
-    saveRequests(requests);
+  if (error || !data) {
+    return null;
   }
+
+  return mapUserFromDB(data);
 }
 
-export function deleteChatRequest(requestId: string) {
-  const requests = getRequests().filter(r => r.id !== requestId);
-  saveRequests(requests);
+export async function getUserByName(name: string): Promise<User | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .ilike('name', name)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return mapUserFromDB(data);
 }
 
-export function deleteChatRequestBetween(userId1: string, userId2: string) {
-  const requests = getRequests().filter(
-    r => !((r.fromUserId === userId1 && r.toUserId === userId2) ||
-           (r.fromUserId === userId2 && r.toUserId === userId1))
-  );
-  saveRequests(requests);
+// ============================================
+// MESSAGES
+// ============================================
+
+export async function getMessages(): Promise<Message[]> {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching messages:', error);
+    return [];
+  }
+
+  return (data || []).map(mapMessageFromDB);
 }
 
-export function areUsersConnected(userId1: string, userId2: string): boolean {
-  const req = getChatRequestBetween(userId1, userId2);
+export async function addMessage(message: Omit<Message, 'id' | 'created_at'>): Promise<Message | null> {
+  const { data, error } = await supabase
+    .from('messages')
+    .insert({
+      sender_id: message.senderId,
+      receiver_id: message.receiverId,
+      text: message.text,
+      status: message.status,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding message:', error);
+    return null;
+  }
+
+  return mapMessageFromDB(data);
+}
+
+export async function getConversation(userId1: string, userId2: string): Promise<Message[]> {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .or(`and(sender_id.eq.${userId1},receiver_id.eq.${userId2}),and(sender_id.eq.${userId2},receiver_id.eq.${userId1})`)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching conversation:', error);
+    return [];
+  }
+
+  return (data || []).map(mapMessageFromDB);
+}
+
+export async function markMessagesAsSeen(receiverId: string, senderId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('messages')
+    .update({ status: 'seen' })
+    .eq('sender_id', senderId)
+    .eq('receiver_id', receiverId)
+    .neq('status', 'seen');
+
+  if (error) {
+    console.error('Error marking messages as seen:', error);
+    return false;
+  }
+
+  return true;
+}
+
+// ============================================
+// CHAT REQUESTS
+// ============================================
+
+export async function getRequests(): Promise<ChatRequest[]> {
+  const { data, error } = await supabase
+    .from('chat_requests')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching requests:', error);
+    return [];
+  }
+
+  return (data || []).map(mapRequestFromDB);
+}
+
+export async function getChatRequestBetween(userId1: string, userId2: string): Promise<ChatRequest | null> {
+  const { data, error } = await supabase
+    .from('chat_requests')
+    .select('*')
+    .or(`and(from_user_id.eq.${userId1},to_user_id.eq.${userId2}),and(from_user_id.eq.${userId2},to_user_id.eq.${userId1})`)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return mapRequestFromDB(data);
+}
+
+export async function createChatRequest(fromUserId: string, toUserId: string): Promise<ChatRequest | null> {
+  // Check if request already exists
+  const existing = await getChatRequestBetween(fromUserId, toUserId);
+  if (existing) {
+    return existing;
+  }
+
+  const { data, error } = await supabase
+    .from('chat_requests')
+    .insert({
+      from_user_id: fromUserId,
+      to_user_id: toUserId,
+      status: 'pending',
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating chat request:', error);
+    return null;
+  }
+
+  return mapRequestFromDB(data);
+}
+
+export async function updateChatRequest(requestId: string, status: 'accepted'): Promise<boolean> {
+  const { error } = await supabase
+    .from('chat_requests')
+    .update({ status })
+    .eq('id', requestId);
+
+  if (error) {
+    console.error('Error updating chat request:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function deleteChatRequest(requestId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('chat_requests')
+    .delete()
+    .eq('id', requestId);
+
+  if (error) {
+    console.error('Error deleting chat request:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function areUsersConnected(userId1: string, userId2: string): Promise<boolean> {
+  const req = await getChatRequestBetween(userId1, userId2);
   return req?.status === 'accepted';
 }
 
-export function getPendingRequestsForUser(userId: string): ChatRequest[] {
-  return getRequests().filter(r => r.toUserId === userId && r.status === 'pending');
-}
+export async function getPendingRequestsForUser(userId: string): Promise<ChatRequest[]> {
+  const { data, error } = await supabase
+    .from('chat_requests')
+    .select('*')
+    .eq('to_user_id', userId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
 
-export function getSentRequestsForUser(userId: string): ChatRequest[] {
-  return getRequests().filter(r => r.fromUserId === userId && r.status === 'pending');
-}
-
-// ---- BroadcastChannel for real-time sync ----
-let channel: BroadcastChannel | null = null;
-
-export function getChannel(): BroadcastChannel {
-  if (!channel) {
-    channel = new BroadcastChannel('laxchat_sync');
+  if (error) {
+    console.error('Error fetching pending requests:', error);
+    return [];
   }
-  return channel;
+
+  return (data || []).map(mapRequestFromDB);
 }
 
-export function broadcastUpdate(type: 'message' | 'user' | 'logout' | 'request' | 'seen') {
-  getChannel().postMessage({ type, timestamp: Date.now() });
+// ============================================
+// REAL-TIME SUBSCRIPTIONS
+// ============================================
+
+export function subscribeToMessages(callback: (message: Message) => void) {
+  return supabase
+    .channel('messages-channel')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages' },
+      (payload) => {
+        const message = mapMessageFromDB(payload.new);
+        callback(message);
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'messages' },
+      (payload) => {
+        const message = mapMessageFromDB(payload.new);
+        callback(message);
+      }
+    )
+    .subscribe();
 }
 
-export function onBroadcast(callback: (data: { type: string; timestamp: number }) => void) {
-  const ch = getChannel();
-  ch.onmessage = (event) => callback(event.data);
-  return () => { ch.onmessage = null; };
+export function subscribeToChatRequests(callback: (request: ChatRequest) => void) {
+  return supabase
+    .channel('chat-requests-channel')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'chat_requests' },
+      (payload) => {
+        const request = mapRequestFromDB(payload.new);
+        callback(request);
+      }
+    )
+    .subscribe();
 }
 
-export function onStorageChange(callback: () => void) {
-  const handler = (e: StorageEvent) => {
-    if (
-      e.key === MESSAGES_KEY ||
-      e.key === USERS_KEY ||
-      e.key === CURRENT_USER_KEY ||
-      e.key === REQUESTS_KEY
-    ) {
-      callback();
-    }
+export function subscribeToUsers(callback: (user: User) => void) {
+  return supabase
+    .channel('users-channel')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'users' },
+      (payload) => {
+        const user = mapUserFromDB(payload.new);
+        callback(user);
+      }
+    )
+    .subscribe();
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+function mapUserFromDB(dbUser: any): User {
+  return {
+    id: dbUser.id,
+    name: dbUser.name,
+    avatar: dbUser.avatar,
+    color: dbUser.color,
+    password: dbUser.password,
+    profileImage: dbUser.profile_image,
+    createdAt: new Date(dbUser.created_at).getTime(),
   };
-  window.addEventListener('storage', handler);
-  return () => window.removeEventListener('storage', handler);
+}
+
+function mapMessageFromDB(dbMessage: any): Message {
+  return {
+    id: dbMessage.id,
+    senderId: dbMessage.sender_id,
+    receiverId: dbMessage.receiver_id,
+    text: dbMessage.text,
+    status: dbMessage.status,
+    timestamp: new Date(dbMessage.created_at).getTime(),
+  };
+}
+
+function mapRequestFromDB(dbRequest: any): ChatRequest {
+  return {
+    id: dbRequest.id,
+    fromUserId: dbRequest.from_user_id,
+    toUserId: dbRequest.to_user_id,
+    status: dbRequest.status,
+    timestamp: new Date(dbRequest.created_at).getTime(),
+  };
 }
