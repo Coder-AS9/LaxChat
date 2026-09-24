@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { User } from '../types';
-import { getUserByName, addUser, setCurrentUser } from '../utils/storage';
+import { getUserByName, addUser } from '../utils/storage';
 
 const AVATARS = ['😎', '🤓', '🦊', '🐱', '🐶', '🦁', '🐼', '🐨', '🦄', '🐸', '🦋', '🌟', '🔥', '💎', '🎮', '🎵', '👨‍💻', '👩‍💻', '🧑‍🎤', '🦸', '🧙', '🥷', '👽', '🤖'];
 const COLORS = [
@@ -23,9 +23,10 @@ export default function Login({ onLogin }: LoginProps) {
   const [profileImage, setProfileImage] = useState<string | undefined>(undefined);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!name.trim()) {
       setError('Please enter your name');
       return;
@@ -35,18 +36,22 @@ export default function Login({ onLogin }: LoginProps) {
       return;
     }
 
-    const user = getUserByName(name.trim());
+    setLoading(true);
+    const user = await getUserByName(name.trim());
+    
     if (!user) {
       setError('User not found. Please register first.');
+      setLoading(false);
       return;
     }
 
     if (user.password !== password) {
       setError('Incorrect password. Please try again.');
+      setLoading(false);
       return;
     }
 
-    setCurrentUser(user);
+    setLoading(false);
     onLogin(user);
   };
 
@@ -73,7 +78,7 @@ export default function Login({ onLogin }: LoginProps) {
     reader.readAsDataURL(file);
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!name.trim()) {
       setError('Please enter a name');
       return;
@@ -95,34 +100,41 @@ export default function Login({ onLogin }: LoginProps) {
       return;
     }
 
-    const existing = getUserByName(name.trim());
+    setLoading(true);
+    const existing = await getUserByName(name.trim());
+    
     if (existing) {
       setError('This name is already taken. Choose a different name or log in.');
+      setLoading(false);
       return;
     }
 
-    const newUser: User = {
-      id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    const newUser = await addUser({
       name: name.trim(),
       avatar: selectedAvatar,
       color: selectedColor,
       password: password,
-      createdAt: Date.now(),
       profileImage: profileImage,
-    };
+      createdAt: Date.now(),
+    });
 
-    addUser(newUser);
-    setCurrentUser(newUser);
+    setLoading(false);
+
+    if (!newUser) {
+      setError('Failed to create account. Please try again.');
+      return;
+    }
+
     onLogin(newUser);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (isRegister) {
-      handleRegister();
+      await handleRegister();
     } else {
-      handleLogin();
+      await handleLogin();
     }
   };
 
@@ -157,6 +169,7 @@ export default function Login({ onLogin }: LoginProps) {
                 placeholder={isRegister ? 'Choose a username' : 'Enter your username'}
                 className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
                 autoFocus
+                disabled={loading}
               />
             </div>
 
@@ -172,6 +185,7 @@ export default function Login({ onLogin }: LoginProps) {
                   onChange={(e) => { setPassword(e.target.value); setError(''); }}
                   placeholder={isRegister ? 'Set a password (min 4 chars)' : 'Enter your password'}
                   className="w-full px-4 py-3 pr-12 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
+                  disabled={loading}
                 />
                 <button
                   type="button"
@@ -204,6 +218,7 @@ export default function Login({ onLogin }: LoginProps) {
                   onChange={(e) => { setConfirmPassword(e.target.value); setError(''); }}
                   placeholder="Confirm your password"
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
+                  disabled={loading}
                 />
               </div>
             )}
@@ -243,6 +258,7 @@ export default function Login({ onLogin }: LoginProps) {
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       className="px-4 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-medium text-indigo-600 hover:bg-indigo-100 transition-colors"
+                      disabled={loading}
                     >
                       📷 Upload Photo
                     </button>
@@ -273,6 +289,7 @@ export default function Login({ onLogin }: LoginProps) {
                             ? 'bg-indigo-100 ring-2 ring-indigo-500 scale-110'
                             : 'bg-gray-50 hover:bg-gray-100'
                         }`}
+                        disabled={loading}
                       >
                         {avatar}
                       </button>
@@ -297,6 +314,7 @@ export default function Login({ onLogin }: LoginProps) {
                             ? 'ring-2 ring-offset-2 ring-indigo-500 scale-110'
                             : 'hover:scale-105'
                         }`}
+                        disabled={loading}
                       />
                     ))}
                   </div>
@@ -317,9 +335,10 @@ export default function Login({ onLogin }: LoginProps) {
             {/* Submit Button */}
             <button
               type="submit"
-              className="w-full py-3 bg-indigo-500 text-white font-semibold rounded-xl hover:bg-indigo-600 transition-colors shadow-md hover:shadow-lg"
+              disabled={loading}
+              className="w-full py-3 bg-indigo-500 text-white font-semibold rounded-xl hover:bg-indigo-600 transition-colors shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isRegister ? 'Create Account & Chat' : 'Log In'}
+              {loading ? 'Please wait...' : (isRegister ? 'Create Account & Chat' : 'Log In')}
             </button>
           </form>
 
@@ -328,6 +347,7 @@ export default function Login({ onLogin }: LoginProps) {
             <button
               onClick={() => { setIsRegister(!isRegister); setError(''); setPassword(''); setConfirmPassword(''); }}
               className="text-sm text-indigo-500 hover:text-indigo-700 font-medium"
+              disabled={loading}
             >
               {isRegister
                 ? 'Already have an account? Log In'
@@ -340,7 +360,7 @@ export default function Login({ onLogin }: LoginProps) {
         {/* Info */}
         <div className="mt-6 text-center">
           <p className="text-indigo-100 text-xs">
-            💡 Tip: Open this page in multiple tabs to chat between different users!
+            💡 Now with real-time sync across all devices!
           </p>
         </div>
       </div>

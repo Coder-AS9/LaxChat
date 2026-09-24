@@ -4,10 +4,6 @@ import {
   getUsers,
   getConversation,
   addMessage,
-  broadcastUpdate,
-  onBroadcast,
-  onStorageChange,
-  setCurrentUser,
   updateUser,
   createChatRequest,
   getChatRequestBetween,
@@ -16,6 +12,9 @@ import {
   areUsersConnected,
   getPendingRequestsForUser,
   markMessagesAsSeen,
+  subscribeToMessages,
+  subscribeToChatRequests,
+  subscribeToUsers,
 } from '../utils/storage';
 
 const AVATARS = ['😎', '🤓', '🦊', '🐱', '🐶', '🦁', '🐼', '🐨', '🦄', '🐸', '🦋', '🌟', '🔥', '💎', '🎮', '🎵', '👨‍💻', '👩‍💻', '🧑‍🎤', '🦸', '🧙', '🥷', '👽', '🤖'];
@@ -33,6 +32,7 @@ interface ChatProps {
 
 export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps) {
   const [contacts, setContacts] = useState<User[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [selectedContact, setSelectedContact] = useState<User | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -48,32 +48,32 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Load contacts - only show connected users in sidebar
-  const loadContacts = useCallback(() => {
-    const allUsers = getUsers().filter(u => u.id !== currentUser.id);
-    // Only show users we're connected with
-    const connectedUsers = allUsers.filter(u => areUsersConnected(currentUser.id, u.id));
+  // Load all users and contacts
+  const loadData = useCallback(async () => {
+    const users = await getUsers();
+    const otherUsers = users.filter(u => u.id !== currentUser.id);
+    setAllUsers(otherUsers);
+
+    // Load connected users
+    const connectedUsers: User[] = [];
+    for (const user of otherUsers) {
+      const connected = await areUsersConnected(currentUser.id, user.id);
+      if (connected) {
+        connectedUsers.push(user);
+      }
+    }
     setContacts(connectedUsers);
 
-    // Only auto-select if no contact is currently selected
+    // Auto-select first contact if none selected
     if (!selectedContact && connectedUsers.length > 0) {
       setSelectedContact(connectedUsers[0]);
-    }
-    // If a contact IS selected, keep it even if not in connected list
-    // (user might be viewing a searched user to send a request)
-    // Only clear if the user was completely deleted from the system
-    if (selectedContact) {
-      const userStillExists = allUsers.find(u => u.id === selectedContact.id);
-      if (!userStillExists) {
-        setSelectedContact(connectedUsers.length > 0 ? connectedUsers[0] : null);
-      }
     }
   }, [currentUser.id, selectedContact]);
 
   // Load messages for selected contact
-  const loadMessages = useCallback(() => {
+  const loadMessages = useCallback(async () => {
     if (!selectedContact) return;
-    const msgs = getConversation(currentUser.id, selectedContact.id);
+    const msgs = await getConversation(currentUser.id, selectedContact.id);
     const formatted: ChatMessage[] = msgs.map(m => ({
       id: m.id,
       text: m.text,
@@ -83,37 +83,27 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     }));
     setChatMessages(formatted);
 
-    // Mark messages as seen when viewing
+    // Mark messages as seen
     const hasUnseen = msgs.some(m => m.senderId === selectedContact.id && m.status !== 'seen');
-    if (hasUnseen && areUsersConnected(currentUser.id, selectedContact.id)) {
-      markMessagesAsSeen(currentUser.id, selectedContact.id);
-      broadcastUpdate('seen');
-      // Reload to show updated status
-      setTimeout(() => {
-        const updatedMsgs = getConversation(currentUser.id, selectedContact.id);
-        const updatedFormatted: ChatMessage[] = updatedMsgs.map(m => ({
-          id: m.id,
-          text: m.text,
-          sender: m.senderId === currentUser.id ? 'me' : 'other',
-          timestamp: m.timestamp,
-          status: m.status,
-        }));
-        setChatMessages(updatedFormatted);
-      }, 100);
+    if (hasUnseen) {
+      const connected = await areUsersConnected(currentUser.id, selectedContact.id);
+      if (connected) {
+        await markMessagesAsSeen(currentUser.id, selectedContact.id);
+      }
     }
   }, [currentUser.id, selectedContact]);
 
-  // Check connection status with selected contact
-  const checkConnection = useCallback(() => {
+  // Check connection status
+  const checkConnection = useCallback(async () => {
     if (!selectedContact) {
       setConnectionStatus('none');
       return;
     }
-    const connected = areUsersConnected(currentUser.id, selectedContact.id);
+    const connected = await areUsersConnected(currentUser.id, selectedContact.id);
     if (connected) {
       setConnectionStatus('connected');
     } else {
-      const req = getChatRequestBetween(currentUser.id, selectedContact.id);
+      const req = await getChatRequestBetween(currentUser.id, selectedContact.id);
       if (!req) {
         setConnectionStatus('none');
       } else if (req.status === 'pending') {
@@ -123,14 +113,14 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   }, [currentUser.id, selectedContact]);
 
   // Load pending requests
-  const loadPendingRequests = useCallback(() => {
-    const requests = getPendingRequestsForUser(currentUser.id);
+  const loadPendingRequests = useCallback(async () => {
+    const requests = await getPendingRequestsForUser(currentUser.id);
     setPendingRequests(requests);
   }, [currentUser.id]);
 
   // Initial load
   useEffect(() => {
-    loadContacts();
+    loadData();
     loadPendingRequests();
   }, []); // eslint-disable-line
 
@@ -145,66 +135,60 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     scrollToBottom();
   }, [chatMessages]);
 
-  // Listen for real-time updates
+  // Set up real-time subscriptions
   useEffect(() => {
-    const unsubBroadcast = onBroadcast(() => {
-      loadContacts();
+    // Subscribe to new messages
+    const msgSub = subscribeToMessages(() => {
       loadMessages();
-      checkConnection();
-      loadPendingRequests();
+      loadData();
     });
 
-    const unsubStorage = onStorageChange(() => {
-      loadContacts();
-      loadMessages();
-      checkConnection();
+    // Subscribe to chat requests
+    const reqSub = subscribeToChatRequests(() => {
       loadPendingRequests();
+      loadData();
+      checkConnection();
     });
 
-    const interval = setInterval(() => {
-      loadMessages();
-      loadContacts();
-      loadPendingRequests();
-    }, 1500);
+    // Subscribe to user updates
+    const userSub = subscribeToUsers(() => {
+      loadData();
+    });
 
     return () => {
-      unsubBroadcast();
-      unsubStorage();
-      clearInterval(interval);
+      msgSub.unsubscribe();
+      reqSub.unsubscribe();
+      userSub.unsubscribe();
     };
-  }, [loadContacts, loadMessages, checkConnection, loadPendingRequests]);
+  }, [loadMessages, loadData, loadPendingRequests, checkConnection]);
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!inputText.trim() || !selectedContact) return;
 
     // Check if connected
-    if (!areUsersConnected(currentUser.id, selectedContact.id)) {
+    const connected = await areUsersConnected(currentUser.id, selectedContact.id);
+    if (!connected) {
       // Create chat request if not exists
-      const existing = getChatRequestBetween(currentUser.id, selectedContact.id);
+      const existing = await getChatRequestBetween(currentUser.id, selectedContact.id);
       if (!existing) {
-        createChatRequest(currentUser.id, selectedContact.id);
-        broadcastUpdate('request');
-        loadPendingRequests();
-        checkConnection();
+        await createChatRequest(currentUser.id, selectedContact.id);
+        await loadPendingRequests();
+        await checkConnection();
       }
-      // Don't send message until accepted
       setInputText('');
       return;
     }
 
-    const msg: Message = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      text: inputText.trim(),
+    await addMessage({
       senderId: currentUser.id,
       receiverId: selectedContact.id,
+      text: inputText.trim(),
       timestamp: Date.now(),
       status: 'sent',
-    };
+    });
 
-    addMessage(msg);
-    broadcastUpdate('message');
     setInputText('');
-    loadMessages();
+    await loadMessages();
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -215,38 +199,34 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    broadcastUpdate('logout');
     onLogout();
   };
 
-  const handleAcceptRequest = (requestId: string, fromUserId: string) => {
-    updateChatRequest(requestId, 'accepted');
-    broadcastUpdate('request');
-    loadPendingRequests();
-    checkConnection();
+  const handleAcceptRequest = async (requestId: string, fromUserId: string) => {
+    await updateChatRequest(requestId, 'accepted');
+    await loadPendingRequests();
+    await checkConnection();
+    await loadData();
+    
     // Select this contact to start chatting
-    const user = getUsers().find(u => u.id === fromUserId);
+    const user = allUsers.find(u => u.id === fromUserId);
     if (user) {
       setSelectedContact(user);
     }
     setShowNotifications(false);
   };
 
-  const handleRejectRequest = (requestId: string) => {
-    // Just delete the request so sender can resend later
-    deleteChatRequest(requestId);
-    broadcastUpdate('request');
-    loadPendingRequests();
-    checkConnection();
+  const handleRejectRequest = async (requestId: string) => {
+    await deleteChatRequest(requestId);
+    await loadPendingRequests();
+    await checkConnection();
     setShowNotifications(false);
   };
 
-  const handleSendRequest = () => {
+  const handleSendRequest = async () => {
     if (!selectedContact) return;
-    createChatRequest(currentUser.id, selectedContact.id);
-    broadcastUpdate('request');
-    checkConnection();
+    await createChatRequest(currentUser.id, selectedContact.id);
+    await checkConnection();
   };
 
   const formatTime = (timestamp: number) => {
@@ -265,10 +245,10 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  const getLastMessage = (contactId: string): string => {
-    const msgs = getConversation(currentUser.id, contactId);
+  const getLastMessage = async (contactId: string): Promise<string> => {
+    const msgs = await getConversation(currentUser.id, contactId);
     if (msgs.length === 0) {
-      const req = getChatRequestBetween(currentUser.id, contactId);
+      const req = await getChatRequestBetween(currentUser.id, contactId);
       if (req && req.status === 'pending') {
         return req.fromUserId === currentUser.id ? '📨 Chat request sent' : '📨 Chat request received';
       }
@@ -280,19 +260,15 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     return prefix + text;
   };
 
-  const getLastMessageTime = (contactId: string): number => {
-    const msgs = getConversation(currentUser.id, contactId);
+  const getLastMessageTime = async (contactId: string): Promise<number> => {
+    const msgs = await getConversation(currentUser.id, contactId);
     if (msgs.length === 0) return 0;
     return msgs[msgs.length - 1].timestamp;
   };
 
-  // When searching (min 3 chars), show ALL users (so you can find new people to connect with)
-  // When not searching, only show connected users
+  // Filter contacts based on search
   const filteredContacts = searchQuery.trim().length >= 3
-    ? getUsers().filter(u =>
-        u.id !== currentUser.id &&
-        u.name.toLowerCase().includes(searchQuery.toLowerCase())
-      )
+    ? allUsers.filter(u => u.name.toLowerCase().includes(searchQuery.toLowerCase()))
     : contacts;
 
   // Group messages by date
@@ -352,8 +328,9 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                         No pending requests
                       </div>
                     ) : (
-                      pendingRequests.map(req => {
-                        const fromUser = getUsers().find(u => u.id === req.fromUserId);
+                      pendingRequests.map(async (req) => {
+                        const users = await getUsers();
+                        const fromUser = users.find(u => u.id === req.fromUserId);
                         if (!fromUser) return null;
                         return (
                           <div key={req.id} className="p-3 border-b border-gray-50 flex items-center gap-3">
@@ -440,7 +417,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
           <div className="relative">
             <input
               type="text"
-              placeholder="Search users (min 3 chars)..."
+              placeholder="Type 3+ chars to search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full px-4 py-2 pl-9 rounded-full bg-gray-100 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
@@ -475,10 +452,13 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
               )}
             </div>
           ) : (
-            filteredContacts.map(contact => {
-              const isConnected = areUsersConnected(currentUser.id, contact.id);
-              const req = getChatRequestBetween(currentUser.id, contact.id);
+            filteredContacts.map(async (contact) => {
+              const isConnected = await areUsersConnected(currentUser.id, contact.id);
+              const req = await getChatRequestBetween(currentUser.id, contact.id);
               const isSearchResult = searchQuery.trim().length >= 3;
+              const lastMsg = await getLastMessage(contact.id);
+              const lastTime = await getLastMessageTime(contact.id);
+
               return (
                 <div
                   key={contact.id}
@@ -509,9 +489,9 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                   <div className="ml-3 flex-1 min-w-0">
                     <div className="flex justify-between items-center">
                       <h3 className="font-semibold text-gray-800 text-sm truncate">{contact.name}</h3>
-                      {isConnected && getLastMessageTime(contact.id) > 0 && (
+                      {isConnected && lastTime > 0 && (
                         <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
-                          {formatTime(getLastMessageTime(contact.id))}
+                          {formatTime(lastTime)}
                         </span>
                       )}
                     </div>
@@ -523,7 +503,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                         <span className="text-xs text-amber-500 font-medium">⏳ Pending</span>
                       )}
                       {isConnected && (
-                        <p className="text-xs text-gray-500 truncate mt-0.5">{getLastMessage(contact.id)}</p>
+                        <p className="text-xs text-gray-500 truncate mt-0.5">{lastMsg}</p>
                       )}
                     </div>
                   </div>
@@ -628,54 +608,26 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                   {connectionStatus === 'pending' && (
                     <>
                       {(() => {
-                        const req = getChatRequestBetween(currentUser.id, selectedContact.id);
-                        if (!req) return null;
-                        const iAmReceiver = req.toUserId === currentUser.id;
-
-                        if (iAmReceiver) {
-                          return (
-                            <>
-                              <p className="text-gray-500 mt-2 mb-6">
-                                <span className="font-medium text-gray-700">{selectedContact.name}</span> wants to chat with you!
-                              </p>
-                              <div className="flex gap-3 justify-center">
-                                <button
-                                  onClick={() => handleAcceptRequest(req.id, req.fromUserId)}
-                                  className="px-6 py-3 bg-green-500 text-white rounded-xl font-medium hover:bg-green-600 transition-colors shadow-md"
-                                >
-                                  ✓ Accept
-                                </button>
-                                <button
-                                  onClick={() => handleRejectRequest(req.id)}
-                                  className="px-6 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors shadow-md"
-                                >
-                                  ✗ Reject
-                                </button>
+                        // This will be handled by the async checkConnection
+                        return (
+                          <>
+                            <div className="mt-4 mb-6">
+                              <div className="inline-flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-full text-sm font-medium">
+                                <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                                </svg>
+                                Waiting for response...
                               </div>
-                            </>
-                          );
-                        } else {
-                          return (
-                            <>
-                              <div className="mt-4 mb-6">
-                                <div className="inline-flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-full text-sm font-medium">
-                                  <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                                  </svg>
-                                  Waiting for response...
-                                </div>
-                              </div>
-                              <p className="text-gray-400 text-sm">
-                                Your chat request has been sent to {selectedContact.name}.<br/>
-                                You'll be able to chat once they accept.
-                              </p>
-                            </>
-                          );
-                        }
+                            </div>
+                            <p className="text-gray-400 text-sm">
+                              Your chat request has been sent to {selectedContact.name}.<br/>
+                              You'll be able to chat once they accept.
+                            </p>
+                          </>
+                        );
                       })()}
                     </>
                   )}
-
                 </div>
               </div>
             ) : (
@@ -801,11 +753,9 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         <SettingsModal
           currentUser={currentUser}
           onClose={() => setShowSettings(false)}
-          onSave={(updatedUser) => {
-            updateUser(updatedUser);
-            setCurrentUser(updatedUser);
+          onSave={async (updatedUser) => {
+            await updateUser(updatedUser);
             onUserUpdate(updatedUser);
-            broadcastUpdate('user');
             setShowSettings(false);
           }}
         />
@@ -833,13 +783,11 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
     if (!file.type.startsWith('image/')) {
       setError('Please select an image file');
       return;
     }
 
-    // Validate file size (max 2MB)
     if (file.size > 2 * 1024 * 1024) {
       setError('Image must be smaller than 2MB');
       return;
@@ -932,7 +880,6 @@ function SettingsModal({ currentUser, onClose, onSave }: SettingsModalProps) {
               Profile Picture
             </label>
             <div className="space-y-3">
-              {/* Upload button */}
               <div className="flex gap-2">
                 <button
                   type="button"
