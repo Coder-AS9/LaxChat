@@ -91,9 +91,18 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     setContactStatuses(statuses);
     setContactLastMessages(lastMessages);
 
-    // Auto-select first contact if none selected
+    // Only auto-select if no contact is currently selected
+    // Don't reset selectedContact if user is viewing a pending request
     if (!selectedContact && connectedUsers.length > 0) {
       setSelectedContact(connectedUsers[0]);
+    } else if (selectedContact) {
+      // Keep the selected contact even if not in connected list
+      // This preserves the view when user is looking at a pending request
+      const stillExists = otherUsers.find(u => u.id === selectedContact.id);
+      if (!stillExists) {
+        // User was deleted, reset to first connected user or null
+        setSelectedContact(connectedUsers.length > 0 ? connectedUsers[0] : null);
+      }
     }
   }, [currentUser.id, selectedContact]);
 
