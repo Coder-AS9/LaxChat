@@ -20,33 +20,59 @@ export async function getUsers(): Promise<User[]> {
 }
 
 export async function addUser(user: Omit<User, 'id' | 'created_at'>): Promise<User | null> {
-  console.log('Attempting to add user to Supabase:', { name: user.name, avatar: user.avatar });
+  console.log('🔍 addUser: Starting user creation...');
+  console.log('🔍 addUser: Inserting user data:', {
+    name: user.name,
+    avatar: user.avatar,
+    color: user.color,
+    password: user.password ? '[SET]' : '[NOT SET]',
+    profile_image: user.profileImage ? '[HAS IMAGE]' : null,
+  });
   
-  const { data, error } = await supabase
-    .from('users')
-    .insert({
-      name: user.name,
-      avatar: user.avatar,
-      color: user.color,
-      password: user.password,
-      profile_image: user.profileImage || null,
-    })
-    .select()
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .insert({
+        name: user.name,
+        avatar: user.avatar,
+        color: user.color,
+        password: user.password,
+        profile_image: user.profileImage || null,
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('❌ Error adding user to Supabase:', error);
-    console.error('Error details:', {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code
+    console.log('🔍 addUser: Supabase response - data:', data);
+    console.log('🔍 addUser: Supabase response - error:', error);
+
+    if (error) {
+      console.error('❌ addUser: Supabase returned error:', error);
+      console.error('❌ addUser: Error details:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
+      return null;
+    }
+
+    if (!data) {
+      console.error('❌ addUser: No data returned from Supabase (but no error either)');
+      return null;
+    }
+
+    console.log('✅ addUser: User successfully created in Supabase:', data);
+    const mappedUser = mapUserFromDB(data);
+    console.log('✅ addUser: Mapped user object:', mappedUser);
+    return mappedUser;
+  } catch (err) {
+    console.error('💥 addUser: Exception thrown:', err);
+    console.error('💥 addUser: Exception details:', {
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
     });
     return null;
   }
-
-  console.log('✅ User successfully added to Supabase:', data);
-  return mapUserFromDB(data);
 }
 
 export async function updateUser(updatedUser: User): Promise<boolean> {
@@ -83,17 +109,30 @@ export async function getUserById(id: string): Promise<User | null> {
 }
 
 export async function getUserByName(name: string): Promise<User | null> {
+  console.log('🔍 getUserByName: Searching for user:', name);
+  
   const { data, error } = await supabase
     .from('users')
     .select('*')
     .ilike('name', name)
     .single();
 
-  if (error || !data) {
+  console.log('🔍 getUserByName: Result - data:', data);
+  console.log('🔍 getUserByName: Result - error:', error);
+
+  if (error) {
+    console.log('🔍 getUserByName: Error occurred (user not found or DB error):', error.message);
     return null;
   }
 
-  return mapUserFromDB(data);
+  if (!data) {
+    console.log('🔍 getUserByName: No data returned (user not found)');
+    return null;
+  }
+
+  const user = mapUserFromDB(data);
+  console.log('✅ getUserByName: User found:', user);
+  return user;
 }
 
 // ============================================

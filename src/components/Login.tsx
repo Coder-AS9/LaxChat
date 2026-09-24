@@ -101,31 +101,58 @@ export default function Login({ onLogin }: LoginProps) {
     }
 
     setLoading(true);
-    const existing = await getUserByName(name.trim());
+    setError('');
     
-    if (existing) {
-      setError('This name is already taken. Choose a different name or log in.');
+    try {
+      console.log('🔍 Step 1: Checking if user already exists...');
+      const existing = await getUserByName(name.trim());
+      
+      if (existing) {
+        console.log('❌ User already exists:', existing);
+        setError('This name is already taken. Choose a different name or log in.');
+        setLoading(false);
+        return;
+      }
+      
+      console.log('✅ User does not exist, proceeding with registration...');
+      console.log('🔍 Step 2: Calling addUser with data:', {
+        name: name.trim(),
+        avatar: selectedAvatar,
+        color: selectedColor,
+        password: password,
+        profileImage: profileImage ? '[HAS IMAGE]' : null,
+      });
+
+      const newUser = await addUser({
+        name: name.trim(),
+        avatar: selectedAvatar,
+        color: selectedColor,
+        password: password,
+        profileImage: profileImage,
+        createdAt: Date.now(),
+      });
+
+      console.log('🔍 Step 3: addUser returned:', newUser);
+
       setLoading(false);
-      return;
+
+      if (!newUser) {
+        console.error('❌ addUser returned null - registration failed');
+        setError('Failed to create account. Check browser console for details.');
+        return;
+      }
+
+      console.log('✅ Registration successful! User created:', newUser);
+      onLogin(newUser);
+    } catch (err) {
+      console.error('💥 EXCEPTION during registration:', err);
+      console.error('Error details:', {
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      setLoading(false);
+      setError(`Registration failed: ${err instanceof Error ? err.message : 'Unknown error'}. Check console.`);
     }
-
-    const newUser = await addUser({
-      name: name.trim(),
-      avatar: selectedAvatar,
-      color: selectedColor,
-      password: password,
-      profileImage: profileImage,
-      createdAt: Date.now(),
-    });
-
-    setLoading(false);
-
-    if (!newUser) {
-      setError('Failed to create account. Please try again.');
-      return;
-    }
-
-    onLogin(newUser);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
