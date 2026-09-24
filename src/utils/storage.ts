@@ -20,6 +20,8 @@ export async function getUsers(): Promise<User[]> {
 }
 
 export async function addUser(user: Omit<User, 'id' | 'created_at'>): Promise<User | null> {
+  console.log('Attempting to add user to Supabase:', { name: user.name, avatar: user.avatar });
+  
   const { data, error } = await supabase
     .from('users')
     .insert({
@@ -33,10 +35,17 @@ export async function addUser(user: Omit<User, 'id' | 'created_at'>): Promise<Us
     .single();
 
   if (error) {
-    console.error('Error adding user:', error);
+    console.error('❌ Error adding user to Supabase:', error);
+    console.error('Error details:', {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code
+    });
     return null;
   }
 
+  console.log('✅ User successfully added to Supabase:', data);
   return mapUserFromDB(data);
 }
 
