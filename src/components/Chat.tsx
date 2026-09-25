@@ -56,56 +56,47 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     const otherUsers = users.filter(u => u.id !== currentUser.id);
     setAllUsers(otherUsers);
 
-    // Load connected users and users with pending requests
-    const visibleUsers: User[] = [];
+    // Only show CONNECTED users in the sidebar (not pending requests)
+    const connectedUsers: User[] = [];
     const statuses: Record<string, 'connected' | 'pending' | 'none'> = {};
     const lastMessages: Record<string, { text: string; time: number }> = {};
 
     for (const user of otherUsers) {
       const connected = await areUsersConnected(currentUser.id, user.id);
       if (connected) {
-        visibleUsers.push(user);
+        connectedUsers.push(user);
         statuses[user.id] = 'connected';
       } else {
         const req = await getChatRequestBetween(currentUser.id, user.id);
         if (req && req.status === 'pending') {
-          // Include users with pending requests in the sidebar
-          visibleUsers.push(user);
           statuses[user.id] = 'pending';
         } else {
           statuses[user.id] = 'none';
         }
       }
 
-      // Pre-load last message
-      const msgs = await getConversation(currentUser.id, user.id);
-      if (msgs.length === 0) {
-        const req = await getChatRequestBetween(currentUser.id, user.id);
-        if (req && req.status === 'pending') {
-          if (req.fromUserId === currentUser.id) {
-            lastMessages[user.id] = { text: '📨 Chat request sent', time: req.timestamp };
-          } else {
-            lastMessages[user.id] = { text: '📨 Chat request received', time: req.timestamp };
-          }
-        } else {
+      // Pre-load last message (only for connected users)
+      if (connected) {
+        const msgs = await getConversation(currentUser.id, user.id);
+        if (msgs.length === 0) {
           lastMessages[user.id] = { text: 'No messages yet', time: 0 };
+        } else {
+          const last = msgs[msgs.length - 1];
+          const prefix = last.senderId === currentUser.id ? 'You: ' : '';
+          const text = last.text.length > 30 ? last.text.substring(0, 30) + '...' : last.text;
+          lastMessages[user.id] = { text: prefix + text, time: last.timestamp };
         }
-      } else {
-        const last = msgs[msgs.length - 1];
-        const prefix = last.senderId === currentUser.id ? 'You: ' : '';
-        const text = last.text.length > 30 ? last.text.substring(0, 30) + '...' : last.text;
-        lastMessages[user.id] = { text: prefix + text, time: last.timestamp };
       }
     }
 
-    setContacts(visibleUsers);
+    setContacts(connectedUsers);
     setContactStatuses(statuses);
     setContactLastMessages(lastMessages);
 
     // Only auto-select if no contact is currently selected
     // NEVER reset selectedContact during polling - this prevents the screen from disappearing
-    if (!selectedContact && visibleUsers.length > 0) {
-      setSelectedContact(visibleUsers[0]);
+    if (!selectedContact && connectedUsers.length > 0) {
+      setSelectedContact(connectedUsers[0]);
     }
     // If selectedContact exists, NEVER change it during loadData
     // This preserves the view when user is looking at a pending request or any profile
@@ -341,8 +332,8 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
 
                 {/* Notifications dropdown */}
                 {showNotifications && (
-                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-100 z-50 max-h-80 overflow-y-auto">
-                    <div className="p-3 border-b border-gray-100">
+                  <div className="fixed right-4 top-20 w-80 bg-white rounded-xl shadow-2xl border border-gray-200 z-[9999] max-h-[70vh] overflow-y-auto">
+                    <div className="p-3 border-b border-gray-100 sticky top-0 bg-white rounded-t-xl">
                       <h3 className="font-semibold text-sm text-gray-800">Chat Requests</h3>
                     </div>
                     {pendingRequests.length === 0 ? (
@@ -355,9 +346,17 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                         if (!fromUser) return null;
                         return (
                           <div key={req.id} className="p-3 border-b border-gray-50 flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-full ${fromUser.color} flex items-center justify-center text-lg flex-shrink-0`}>
-                              {fromUser.avatar}
-                            </div>
+                            {fromUser.profileImage ? (
+                              <img
+                                src={fromUser.profileImage}
+                                alt={fromUser.name}
+                                className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                              />
+                            ) : (
+                              <div className={`w-10 h-10 rounded-full ${fromUser.color} flex items-center justify-center text-lg flex-shrink-0`}>
+                                {fromUser.avatar}
+                              </div>
+                            )}
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-gray-800 truncate">{fromUser.name}</p>
                               <p className="text-xs text-gray-500">wants to chat with you</p>
@@ -478,6 +477,11 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
               const isConnected = status === 'connected';
               const isSearchResult = searchQuery.trim().length >= 3;
               const lastMsgData = contactLastMessages[contact.id] || { text: 'No messages yet', time: 0 };
+              
+              // Check if there's a pending request from this contact to current user
+              const incomingRequest = pendingRequests.find(
+                req => req.fromUserId === contact.id && req.toUserId === currentUser.id
+              );
 
               return (
                 <div
@@ -516,11 +520,27 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                       )}
                     </div>
                     <div className="flex items-center gap-1">
-                      {isSearchResult && !isConnected && (
+                      {isSearchResult && !isConnected && !incomingRequest && (
                         <span className="text-xs text-indigo-500 font-medium mr-1">🔍 Found</span>
                       )}
-                      {!isConnected && status === 'pending' && (
+                      {!isConnected && status === 'pending' && !incomingRequest && (
                         <span className="text-xs text-amber-500 font-medium">⏳ Pending</span>
+                      )}
+                      {incomingRequest && isSearchResult && (
+                        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleAcceptRequest(incomingRequest.id, incomingRequest.fromUserId)}
+                            className="px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
+                          >
+                            ✓ Accept
+                          </button>
+                          <button
+                            onClick={() => handleRejectRequest(incomingRequest.id)}
+                            className="px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600 transition-colors"
+                          >
+                            ✗ Reject
+                          </button>
+                        </div>
                       )}
                       {isConnected && (
                         <p className="text-xs text-gray-500 truncate mt-0.5">{lastMsgData.text}</p>
