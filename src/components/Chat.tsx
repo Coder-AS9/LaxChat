@@ -48,6 +48,10 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -326,6 +330,93 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  // Image viewer zoom and pan handlers
+  const handleZoomIn = () => {
+    setImageZoom(prev => Math.min(prev + 0.5, 5));
+  };
+
+  const handleZoomOut = () => {
+    setImageZoom(prev => {
+      const newZoom = Math.max(prev - 0.5, 1);
+      if (newZoom === 1) {
+        setImagePosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
+  };
+
+  const handleResetZoom = () => {
+    setImageZoom(1);
+    setImagePosition({ x: 0, y: 0 });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.2 : 0.2;
+    setImageZoom(prev => {
+      const newZoom = Math.max(1, Math.min(prev + delta, 5));
+      if (newZoom === 1) {
+        setImagePosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (imageZoom > 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - imagePosition.x, y: e.clientY - imagePosition.y });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging && imageZoom > 1) {
+      setImagePosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1 && imageZoom > 1) {
+      setIsDragging(true);
+      setDragStart({
+        x: e.touches[0].clientX - imagePosition.x,
+        y: e.touches[0].clientY - imagePosition.y
+      });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isDragging && imageZoom > 1 && e.touches.length === 1) {
+      setImagePosition({
+        x: e.touches[0].clientX - dragStart.x,
+        y: e.touches[0].clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+  };
+
+  const openImageViewer = (imageUrl: string) => {
+    setViewingImage(imageUrl);
+    setImageZoom(1);
+    setImagePosition({ x: 0, y: 0 });
+  };
+
+  const closeImageViewer = () => {
+    setViewingImage(null);
+    setImageZoom(1);
+    setImagePosition({ x: 0, y: 0 });
   };
 
   const formatTime = (timestamp: number) => {
@@ -843,7 +934,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                                         src={imageUrl} 
                                         alt="Shared image" 
                                         className="max-w-full rounded-lg mb-2 cursor-pointer hover:opacity-90 transition-opacity"
-                                        onClick={() => setViewingImage(imageUrl)}
+                                        onClick={() => openImageViewer(imageUrl)}
                                       />
                                       {caption && <p className="text-sm leading-relaxed break-words">{caption}</p>}
                                     </div>
@@ -1013,26 +1104,117 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         )}
       </div>
 
-      {/* Full-Screen Image Viewer */}
+      {/* Full-Screen Image Viewer with Zoom */}
       {viewingImage && (
         <div 
-          className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4"
-          onClick={() => setViewingImage(null)}
+          className="fixed inset-0 bg-black/95 z-[9999] flex flex-col"
+          onClick={closeImageViewer}
         >
-          <button
-            onClick={() => setViewingImage(null)}
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-          <img 
-            src={viewingImage} 
-            alt="Full size" 
-            className="max-w-full max-h-full object-contain rounded-lg"
+          {/* Top Bar with Controls */}
+          <div className="flex items-center justify-between p-4 bg-black/50" onClick={(e) => e.stopPropagation()}>
+            <div className="text-white text-sm font-medium">
+              {Math.round(imageZoom * 100)}%
+            </div>
+            
+            <div className="flex items-center gap-2">
+              {/* Zoom Out Button */}
+              <button
+                onClick={handleZoomOut}
+                disabled={imageZoom <= 1}
+                className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+                title="Zoom Out"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                </svg>
+              </button>
+
+              {/* Reset Zoom Button */}
+              <button
+                onClick={handleResetZoom}
+                disabled={imageZoom === 1}
+                className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+                title="Reset Zoom"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+
+              {/* Zoom In Button */}
+              <button
+                onClick={handleZoomIn}
+                disabled={imageZoom >= 5}
+                className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+                title="Zoom In"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+
+              {/* Download Button */}
+              <a
+                href={viewingImage}
+                download="image.png"
+                className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
+                title="Download Image"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </a>
+
+              {/* Close Button */}
+              <button
+                onClick={closeImageViewer}
+                className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
+                title="Close"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Image Container */}
+          <div 
+            className="flex-1 flex items-center justify-center overflow-hidden relative"
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
             onClick={(e) => e.stopPropagation()}
-          />
+            style={{ cursor: imageZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+          >
+            <img 
+              src={viewingImage} 
+              alt="Full size" 
+              className="max-w-none transition-transform duration-200 ease-out select-none"
+              style={{
+                transform: `translate(${imagePosition.x}px, ${imagePosition.y}px) scale(${imageZoom})`,
+                maxWidth: '90vw',
+                maxHeight: '80vh',
+                objectFit: 'contain'
+              }}
+              draggable={false}
+            />
+          </div>
+
+          {/* Bottom Help Text */}
+          <div className="p-3 bg-black/50 text-center" onClick={(e) => e.stopPropagation()}>
+            <p className="text-white/70 text-xs">
+              {imageZoom > 1 
+                ? 'Drag to pan • Scroll to zoom • Click buttons to adjust'
+                : 'Click + or scroll up to zoom in • Click image controls above'}
+            </p>
+          </div>
         </div>
       )}
 
