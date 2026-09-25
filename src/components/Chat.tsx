@@ -56,19 +56,21 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     const otherUsers = users.filter(u => u.id !== currentUser.id);
     setAllUsers(otherUsers);
 
-    // Load connected users and pre-load all metadata
-    const connectedUsers: User[] = [];
+    // Load connected users and users with pending requests
+    const visibleUsers: User[] = [];
     const statuses: Record<string, 'connected' | 'pending' | 'none'> = {};
     const lastMessages: Record<string, { text: string; time: number }> = {};
 
     for (const user of otherUsers) {
       const connected = await areUsersConnected(currentUser.id, user.id);
       if (connected) {
-        connectedUsers.push(user);
+        visibleUsers.push(user);
         statuses[user.id] = 'connected';
       } else {
         const req = await getChatRequestBetween(currentUser.id, user.id);
         if (req && req.status === 'pending') {
+          // Include users with pending requests in the sidebar
+          visibleUsers.push(user);
           statuses[user.id] = 'pending';
         } else {
           statuses[user.id] = 'none';
@@ -78,7 +80,16 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
       // Pre-load last message
       const msgs = await getConversation(currentUser.id, user.id);
       if (msgs.length === 0) {
-        lastMessages[user.id] = { text: 'No messages yet', time: 0 };
+        const req = await getChatRequestBetween(currentUser.id, user.id);
+        if (req && req.status === 'pending') {
+          if (req.fromUserId === currentUser.id) {
+            lastMessages[user.id] = { text: '📨 Chat request sent', time: req.timestamp };
+          } else {
+            lastMessages[user.id] = { text: '📨 Chat request received', time: req.timestamp };
+          }
+        } else {
+          lastMessages[user.id] = { text: 'No messages yet', time: 0 };
+        }
       } else {
         const last = msgs[msgs.length - 1];
         const prefix = last.senderId === currentUser.id ? 'You: ' : '';
@@ -87,14 +98,14 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
       }
     }
 
-    setContacts(connectedUsers);
+    setContacts(visibleUsers);
     setContactStatuses(statuses);
     setContactLastMessages(lastMessages);
 
     // Only auto-select if no contact is currently selected
     // NEVER reset selectedContact during polling - this prevents the screen from disappearing
-    if (!selectedContact && connectedUsers.length > 0) {
-      setSelectedContact(connectedUsers[0]);
+    if (!selectedContact && visibleUsers.length > 0) {
+      setSelectedContact(visibleUsers[0]);
     }
     // If selectedContact exists, NEVER change it during loadData
     // This preserves the view when user is looking at a pending request or any profile
@@ -123,6 +134,12 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     }
   }, [currentUser.id, selectedContact]);
 
+  // Load pending requests
+  const loadPendingRequests = useCallback(async () => {
+    const requests = await getPendingRequestsForUser(currentUser.id);
+    setPendingRequests(requests);
+  }, [currentUser.id]);
+
   // Check connection status
   const checkConnection = useCallback(async () => {
     if (!selectedContact) {
@@ -138,15 +155,11 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         setConnectionStatus('none');
       } else if (req.status === 'pending') {
         setConnectionStatus('pending');
+        // Make sure pending requests are loaded for the Accept/Reject UI
+        await loadPendingRequests();
       }
     }
-  }, [currentUser.id, selectedContact]);
-
-  // Load pending requests
-  const loadPendingRequests = useCallback(async () => {
-    const requests = await getPendingRequestsForUser(currentUser.id);
-    setPendingRequests(requests);
-  }, [currentUser.id]);
+  }, [currentUser.id, selectedContact, loadPendingRequests]);
 
   // Initial load
   useEffect(() => {
@@ -615,23 +628,54 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                   {connectionStatus === 'pending' && (
                     <>
                       {(() => {
-                        // This will be handled by the async checkConnection
-                        return (
-                          <>
-                            <div className="mt-4 mb-6">
-                              <div className="inline-flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-full text-sm font-medium">
-                                <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                                </svg>
-                                Waiting for response...
-                              </div>
-                            </div>
-                            <p className="text-gray-400 text-sm">
-                              Your chat request has been sent to {selectedContact.name}.<br/>
-                              You'll be able to chat once they accept.
-                            </p>
-                          </>
+                        // Check if we received this request or sent it
+                        const request = pendingRequests.find(r => 
+                          (r.fromUserId === selectedContact.id && r.toUserId === currentUser.id) ||
+                          (r.fromUserId === currentUser.id && r.toUserId === selectedContact.id)
                         );
+                        
+                        if (request && request.toUserId === currentUser.id) {
+                          // We received the request - show Accept/Reject buttons
+                          return (
+                            <>
+                              <p className="text-gray-500 mt-2 mb-6">
+                                <span className="font-medium text-gray-700">{selectedContact.name}</span> wants to chat with you!
+                              </p>
+                              <div className="flex gap-3 justify-center">
+                                <button
+                                  onClick={() => handleAcceptRequest(request.id, request.fromUserId)}
+                                  className="px-6 py-3 bg-green-500 text-white rounded-xl font-medium hover:bg-green-600 transition-colors shadow-md"
+                                >
+                                  ✓ Accept
+                                </button>
+                                <button
+                                  onClick={() => handleRejectRequest(request.id)}
+                                  className="px-6 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors shadow-md"
+                                >
+                                  ✗ Reject
+                                </button>
+                              </div>
+                            </>
+                          );
+                        } else {
+                          // We sent the request - show waiting message
+                          return (
+                            <>
+                              <div className="mt-4 mb-6">
+                                <div className="inline-flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-full text-sm font-medium">
+                                  <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                                  </svg>
+                                  Waiting for response...
+                                </div>
+                              </div>
+                              <p className="text-gray-400 text-sm">
+                                Your chat request has been sent to {selectedContact.name}.<br/>
+                                You'll be able to chat once they accept.
+                              </p>
+                            </>
+                          );
+                        }
                       })()}
                     </>
                   )}
