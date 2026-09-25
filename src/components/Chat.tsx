@@ -47,6 +47,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -838,7 +839,12 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                                   const caption = text.replace(imageMatch[0], '').trim();
                                   return (
                                     <div>
-                                      <img src={imageUrl} alt="Shared image" className="max-w-full rounded-lg mb-2" />
+                                      <img 
+                                        src={imageUrl} 
+                                        alt="Shared image" 
+                                        className="max-w-full rounded-lg mb-2 cursor-pointer hover:opacity-90 transition-opacity"
+                                        onClick={() => setViewingImage(imageUrl)}
+                                      />
                                       {caption && <p className="text-sm leading-relaxed break-words">{caption}</p>}
                                     </div>
                                   );
@@ -1006,6 +1012,29 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
           </div>
         )}
       </div>
+
+      {/* Full-Screen Image Viewer */}
+      {viewingImage && (
+        <div 
+          className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4"
+          onClick={() => setViewingImage(null)}
+        >
+          <button
+            onClick={() => setViewingImage(null)}
+            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <img 
+            src={viewingImage} 
+            alt="Full size" 
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {/* Settings Modal */}
       {showSettings && (
