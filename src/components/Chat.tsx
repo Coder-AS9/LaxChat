@@ -299,6 +299,90 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
 
   return (
     <div className="h-screen w-full flex bg-gray-100 overflow-hidden">
+      {/* Backdrop for notifications */}
+      {showNotifications && (
+        <div 
+          className="fixed inset-0 bg-black/20 z-[9998]"
+          onClick={() => setShowNotifications(false)}
+        />
+      )}
+
+      {/* Notifications popup - rendered outside sidebar to avoid clipping */}
+      {showNotifications && (
+        <div className="fixed right-4 top-20 w-[420px] bg-white rounded-2xl shadow-2xl border-2 border-indigo-200 z-[9999] max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="p-5 border-b-2 border-indigo-100 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 rounded-t-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-lg text-white flex items-center gap-2">
+                  <span className="text-2xl">📨</span>
+                  Chat Requests
+                </h3>
+                <p className="text-sm text-indigo-100 mt-1">
+                  {pendingRequests.length} pending {pendingRequests.length === 1 ? 'request' : 'requests'}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowNotifications(false)}
+                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {pendingRequests.length === 0 ? (
+              <div className="p-12 text-center text-gray-400">
+                <div className="text-6xl mb-3">📭</div>
+                <p className="text-base font-medium">No pending requests</p>
+                <p className="text-sm mt-1">You're all caught up!</p>
+              </div>
+            ) : (
+              pendingRequests.map((req) => {
+                const fromUser = allUsers.find(u => u.id === req.fromUserId);
+                if (!fromUser) return null;
+                return (
+                  <div key={req.id} className="p-5 border-b border-gray-100 hover:bg-gradient-to-r hover:from-indigo-50 hover:to-purple-50 transition-all">
+                    <div className="flex items-center gap-4">
+                      {fromUser.profileImage ? (
+                        <img
+                          src={fromUser.profileImage}
+                          alt={fromUser.name}
+                          className="w-14 h-14 rounded-full object-cover flex-shrink-0 border-3 border-indigo-300 shadow-md"
+                        />
+                      ) : (
+                        <div className={`w-14 h-14 rounded-full ${fromUser.color} flex items-center justify-center text-2xl flex-shrink-0 border-3 border-white shadow-md`}>
+                          {fromUser.avatar}
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <p className="text-base font-bold text-gray-800 mb-1">{fromUser.name}</p>
+                        <p className="text-sm text-gray-600 mb-3">wants to start a chat with you</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleAcceptRequest(req.id, req.fromUserId)}
+                            className="flex-1 px-4 py-2.5 bg-green-500 text-white text-sm font-semibold rounded-lg hover:bg-green-600 transition-all shadow-md hover:shadow-lg"
+                          >
+                            ✓ Accept
+                          </button>
+                          <button
+                            onClick={() => handleRejectRequest(req.id)}
+                            className="flex-1 px-4 py-2.5 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
+                          >
+                            ✗ Reject
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <div className={`
         ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}
@@ -315,79 +399,19 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
             </h1>
             <div className="flex items-center gap-1">
               {/* Notifications bell */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors relative"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                  </svg>
-                  {pendingRequests.length > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs w-4 h-4 rounded-full flex items-center justify-center font-bold">
-                      {pendingRequests.length}
-                    </span>
-                  )}
-                </button>
-
-                {/* Notifications dropdown */}
-                {showNotifications && (
-                  <div className="fixed right-4 top-20 w-80 bg-white rounded-xl shadow-2xl border border-gray-200 z-[9999] max-h-[70vh] overflow-y-auto">
-                    <div className="p-3 border-b border-gray-100 sticky top-0 bg-white rounded-t-xl">
-                      <h3 className="font-semibold text-sm text-gray-800">Chat Requests</h3>
-                    </div>
-                    {pendingRequests.length === 0 ? (
-                      <div className="p-4 text-center text-gray-400 text-sm">
-                        No pending requests
-                      </div>
-                    ) : (
-                      pendingRequests.map((req) => {
-                        const fromUser = allUsers.find(u => u.id === req.fromUserId);
-                        if (!fromUser) return null;
-                        return (
-                          <div key={req.id} className="p-3 border-b border-gray-50 flex items-center gap-3">
-                            {fromUser.profileImage ? (
-                              <img
-                                src={fromUser.profileImage}
-                                alt={fromUser.name}
-                                className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-                              />
-                            ) : (
-                              <div className={`w-10 h-10 rounded-full ${fromUser.color} flex items-center justify-center text-lg flex-shrink-0`}>
-                                {fromUser.avatar}
-                              </div>
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-800 truncate">{fromUser.name}</p>
-                              <p className="text-xs text-gray-500">wants to chat with you</p>
-                            </div>
-                            <div className="flex gap-1 flex-shrink-0">
-                              <button
-                                onClick={() => handleAcceptRequest(req.id, req.fromUserId)}
-                                className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-                                title="Accept"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </button>
-                              <button
-                                onClick={() => handleRejectRequest(req.id)}
-                                className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                                title="Reject"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors relative"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                {pendingRequests.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold animate-pulse">
+                    {pendingRequests.length}
+                  </span>
                 )}
-              </div>
+              </button>
 
               {/* Settings */}
               <button
