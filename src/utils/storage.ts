@@ -1,11 +1,22 @@
-import { supabase } from './supabase';
+import { supabase, isSupabaseConfigured } from './supabase';
 import type { User, Message, ChatRequest } from '../types';
+
+// Helper function to check if Supabase is configured
+function checkSupabaseConfig(): boolean {
+  if (!isSupabaseConfigured) {
+    console.error('❌ Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.');
+    return false;
+  }
+  return true;
+}
 
 // ============================================
 // USERS
 // ============================================
 
 export async function getUsers(): Promise<User[]> {
+  if (!checkSupabaseConfig()) return [];
+
   const { data, error } = await supabase
     .from('users')
     .select('*')
@@ -20,6 +31,8 @@ export async function getUsers(): Promise<User[]> {
 }
 
 export async function addUser(user: Omit<User, 'id' | 'created_at'>): Promise<User | null> {
+  if (!checkSupabaseConfig()) return null;
+
   console.log('🔍 addUser: Starting user creation...');
   console.log('🔍 addUser: Inserting user data:', {
     name: user.name,
@@ -76,6 +89,8 @@ export async function addUser(user: Omit<User, 'id' | 'created_at'>): Promise<Us
 }
 
 export async function updateUser(updatedUser: User): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
   const { error } = await supabase
     .from('users')
     .update({
@@ -95,6 +110,8 @@ export async function updateUser(updatedUser: User): Promise<boolean> {
 }
 
 export async function getUserById(id: string): Promise<User | null> {
+  if (!checkSupabaseConfig()) return null;
+
   const { data, error } = await supabase
     .from('users')
     .select('*')
@@ -109,6 +126,8 @@ export async function getUserById(id: string): Promise<User | null> {
 }
 
 export async function getUserByName(name: string): Promise<User | null> {
+  if (!checkSupabaseConfig()) return null;
+
   console.log('🔍 getUserByName: Searching for user:', name);
   
   const { data, error } = await supabase
@@ -140,6 +159,8 @@ export async function getUserByName(name: string): Promise<User | null> {
 // ============================================
 
 export async function getMessages(): Promise<Message[]> {
+  if (!checkSupabaseConfig()) return [];
+
   const { data, error } = await supabase
     .from('messages')
     .select('*')
@@ -154,6 +175,8 @@ export async function getMessages(): Promise<Message[]> {
 }
 
 export async function addMessage(message: Omit<Message, 'id' | 'created_at'>): Promise<Message | null> {
+  if (!checkSupabaseConfig()) return null;
+
   const { data, error } = await supabase
     .from('messages')
     .insert({
@@ -174,6 +197,8 @@ export async function addMessage(message: Omit<Message, 'id' | 'created_at'>): P
 }
 
 export async function getConversation(userId1: string, userId2: string): Promise<Message[]> {
+  if (!checkSupabaseConfig()) return [];
+
   const { data, error } = await supabase
     .from('messages')
     .select('*')
@@ -189,6 +214,8 @@ export async function getConversation(userId1: string, userId2: string): Promise
 }
 
 export async function markMessagesAsSeen(receiverId: string, senderId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
   const { error } = await supabase
     .from('messages')
     .update({ status: 'seen' })
@@ -209,6 +236,8 @@ export async function markMessagesAsSeen(receiverId: string, senderId: string): 
 // ============================================
 
 export async function getRequests(): Promise<ChatRequest[]> {
+  if (!checkSupabaseConfig()) return [];
+
   const { data, error } = await supabase
     .from('chat_requests')
     .select('*')
@@ -223,6 +252,8 @@ export async function getRequests(): Promise<ChatRequest[]> {
 }
 
 export async function getChatRequestBetween(userId1: string, userId2: string): Promise<ChatRequest | null> {
+  if (!checkSupabaseConfig()) return null;
+
   const { data, error } = await supabase
     .from('chat_requests')
     .select('*')
@@ -237,6 +268,8 @@ export async function getChatRequestBetween(userId1: string, userId2: string): P
 }
 
 export async function createChatRequest(fromUserId: string, toUserId: string): Promise<ChatRequest | null> {
+  if (!checkSupabaseConfig()) return null;
+
   // Check if request already exists
   const existing = await getChatRequestBetween(fromUserId, toUserId);
   if (existing) {
@@ -262,6 +295,8 @@ export async function createChatRequest(fromUserId: string, toUserId: string): P
 }
 
 export async function updateChatRequest(requestId: string, status: 'accepted'): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
   const { error } = await supabase
     .from('chat_requests')
     .update({ status })
@@ -276,6 +311,8 @@ export async function updateChatRequest(requestId: string, status: 'accepted'): 
 }
 
 export async function deleteChatRequest(requestId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
   const { error } = await supabase
     .from('chat_requests')
     .delete()
@@ -290,11 +327,15 @@ export async function deleteChatRequest(requestId: string): Promise<boolean> {
 }
 
 export async function areUsersConnected(userId1: string, userId2: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
   const req = await getChatRequestBetween(userId1, userId2);
   return req?.status === 'accepted';
 }
 
 export async function getPendingRequestsForUser(userId: string): Promise<ChatRequest[]> {
+  if (!checkSupabaseConfig()) return [];
+
   const { data, error } = await supabase
     .from('chat_requests')
     .select('*')
@@ -314,7 +355,14 @@ export async function getPendingRequestsForUser(userId: string): Promise<ChatReq
 // REAL-TIME SUBSCRIPTIONS
 // ============================================
 
+// Mock subscription object for when Supabase is not configured
+const mockSubscription = {
+  unsubscribe: () => {},
+};
+
 export function subscribeToMessages(callback: (message: Message) => void) {
+  if (!checkSupabaseConfig()) return mockSubscription;
+
   return supabase
     .channel('messages-channel')
     .on(
@@ -337,6 +385,8 @@ export function subscribeToMessages(callback: (message: Message) => void) {
 }
 
 export function subscribeToChatRequests(callback: (request: ChatRequest) => void) {
+  if (!checkSupabaseConfig()) return mockSubscription;
+
   return supabase
     .channel('chat-requests-channel')
     .on(
@@ -351,6 +401,8 @@ export function subscribeToChatRequests(callback: (request: ChatRequest) => void
 }
 
 export function subscribeToUsers(callback: (user: User) => void) {
+  if (!checkSupabaseConfig()) return mockSubscription;
+
   return supabase
     .channel('users-channel')
     .on(
