@@ -44,7 +44,16 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'pending' | 'none'>('none');
   const [contactStatuses, setContactStatuses] = useState<Record<string, 'connected' | 'pending' | 'none'>>({});
   const [contactLastMessages, setContactLastMessages] = useState<Record<string, { text: string; time: number }>>({});
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -197,7 +206,7 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   }, [loadMessages, loadData, loadPendingRequests, checkConnection]);
 
   const sendMessage = async () => {
-    if (!inputText.trim() || !selectedContact) return;
+    if ((!inputText.trim() && !mediaPreview) || !selectedContact) return;
 
     // Check if connected
     const connected = await areUsersConnected(currentUser.id, selectedContact.id);
@@ -210,18 +219,30 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
         await checkConnection();
       }
       setInputText('');
+      handleRemoveMedia();
       return;
+    }
+
+    // Prepare message text with media if present
+    let messageText = inputText.trim();
+    if (mediaPreview) {
+      // For images/videos, we'll include them as base64 in the message
+      // In a production app, you'd upload to storage and send a URL
+      const mediaMarker = mediaFile?.type.startsWith('image/') ? '[IMAGE]' : '[VIDEO]';
+      messageText = messageText ? `${messageText}\n${mediaMarker}${mediaPreview}` : `${mediaMarker}${mediaPreview}`;
     }
 
     await addMessage({
       senderId: currentUser.id,
       receiverId: selectedContact.id,
-      text: inputText.trim(),
+      text: messageText,
       timestamp: Date.now(),
       status: 'sent',
     });
 
     setInputText('');
+    handleRemoveMedia();
+    setShowEmojiPicker(false);
     await loadMessages();
   };
 
@@ -261,6 +282,141 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
     if (!selectedContact) return;
     await createChatRequest(currentUser.id, selectedContact.id);
     await checkConnection();
+  };
+
+  // Emoji picker data
+  const EMOJI_CATEGORIES = {
+    'Smileys': ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳'],
+    'Gestures': ['👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐️', '🖖', '👋', '🤝', '🙏', '💪', '🦾', '🦵', '🦿', '👂', '🦻', '👃', '🧠', '🦷', '🦴'],
+    'Hearts': ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '♥️', '🫶', '🫰', '🫵', '🫂'],
+    'Objects': ['🎉', '🎊', '🎈', '🎁', '🎀', '🎗️', '🎟️', '🎫', '🏆', '🏅', '🥇', '🥈', '🥉', '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🔮', '🧿', '🎮', '🕹️', '🎰', '🎲', '🧩'],
+    'Nature': ['🌸', '💮', '🏵️', '🌹', '🥀', '🌺', '🌻', '🌼', '🌷', '🌱', '🪴', '🌲', '🌳', '🌴', '🌵', '🌾', '🌿', '☘️', '🍀', '🍁', '🍂', '🍃', '🍄', '🌰', '🦀', '🦞', '🦐', '🦑', '🐙']
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    setInputText(prev => prev + emoji);
+    setShowEmojiPicker(false);
+  };
+
+  const handleMediaSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      alert('Please select an image or video file');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File size must be less than 5MB');
+      return;
+    }
+
+    setMediaFile(file);
+
+    // Create preview
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setMediaPreview(event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveMedia = () => {
+    setMediaPreview(null);
+    setMediaFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Image viewer zoom and pan handlers
+  const handleZoomIn = () => {
+    setImageZoom(prev => Math.min(prev + 0.5, 5));
+  };
+
+  const handleZoomOut = () => {
+    setImageZoom(prev => {
+      const newZoom = Math.max(prev - 0.5, 1);
+      if (newZoom === 1) {
+        setImagePosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
+  };
+
+  const handleResetZoom = () => {
+    setImageZoom(1);
+    setImagePosition({ x: 0, y: 0 });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.2 : 0.2;
+    setImageZoom(prev => {
+      const newZoom = Math.max(1, Math.min(prev + delta, 5));
+      if (newZoom === 1) {
+        setImagePosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (imageZoom > 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - imagePosition.x, y: e.clientY - imagePosition.y });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging && imageZoom > 1) {
+      setImagePosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1 && imageZoom > 1) {
+      setIsDragging(true);
+      setDragStart({
+        x: e.touches[0].clientX - imagePosition.x,
+        y: e.touches[0].clientY - imagePosition.y
+      });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isDragging && imageZoom > 1 && e.touches.length === 1) {
+      setImagePosition({
+        x: e.touches[0].clientX - dragStart.x,
+        y: e.touches[0].clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+  };
+
+  const openImageViewer = (imageUrl: string) => {
+    setViewingImage(imageUrl);
+    setImageZoom(1);
+    setImagePosition({ x: 0, y: 0 });
+  };
+
+  const closeImageViewer = () => {
+    setViewingImage(null);
+    setImageZoom(1);
+    setImagePosition({ x: 0, y: 0 });
   };
 
   const formatTime = (timestamp: number) => {
@@ -763,7 +919,41 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
                                   : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
                               }`}
                             >
-                              <p className="text-sm leading-relaxed break-words">{message.text}</p>
+                              {/* Render message content with media support */}
+                              {(() => {
+                                const text = message.text;
+                                const imageMatch = text.match(/\[IMAGE\](data:image\/[^;]+;base64,.+)/);
+                                const videoMatch = text.match(/\[VIDEO\](data:video\/[^;]+;base64,.+)/);
+                                
+                                if (imageMatch) {
+                                  const imageUrl = imageMatch[1];
+                                  const caption = text.replace(imageMatch[0], '').trim();
+                                  return (
+                                    <div>
+                                      <img 
+                                        src={imageUrl} 
+                                        alt="Shared image" 
+                                        className="max-w-full rounded-lg mb-2 cursor-pointer hover:opacity-90 transition-opacity"
+                                        onClick={() => openImageViewer(imageUrl)}
+                                      />
+                                      {caption && <p className="text-sm leading-relaxed break-words">{caption}</p>}
+                                    </div>
+                                  );
+                                }
+                                
+                                if (videoMatch) {
+                                  const videoUrl = videoMatch[1];
+                                  const caption = text.replace(videoMatch[0], '').trim();
+                                  return (
+                                    <div>
+                                      <video src={videoUrl} controls className="max-w-full rounded-lg mb-2" />
+                                      {caption && <p className="text-sm leading-relaxed break-words">{caption}</p>}
+                                    </div>
+                                  );
+                                }
+                                
+                                return <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{text}</p>;
+                              })()}
                               <div className={`flex items-center gap-1 mt-1 justify-end`}>
                                 <p className={`text-xs ${message.sender === 'me' ? 'text-indigo-200' : 'text-gray-400'}`}>
                                   {formatTime(message.timestamp)}
@@ -789,34 +979,104 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
 
                 {/* Message Input */}
                 <div className="bg-white border-t border-gray-200 p-3 md:p-4">
-                  <div className="max-w-3xl mx-auto flex items-center gap-2 md:gap-3">
-                    <button className="p-2 rounded-full hover:bg-gray-100 text-gray-400 transition-colors hidden md:block">
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                      </svg>
-                    </button>
-                    <div className="flex-1 relative">
+                  <div className="max-w-3xl mx-auto">
+                    {/* Media Preview */}
+                    {mediaPreview && (
+                      <div className="mb-3 relative inline-block">
+                        {mediaFile?.type.startsWith('image/') ? (
+                          <img src={mediaPreview} alt="Preview" className="max-h-32 rounded-lg border-2 border-indigo-200" />
+                        ) : (
+                          <video src={mediaPreview} className="max-h-32 rounded-lg border-2 border-indigo-200" controls />
+                        )}
+                        <button
+                          onClick={handleRemoveMedia}
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-md"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 md:gap-3">
+                      {/* Attachment Button */}
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-2 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+                        title="Attach media"
+                      >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                        </svg>
+                      </button>
+
+                      {/* Hidden File Input */}
                       <input
-                        type="text"
-                        placeholder="Type a message..."
-                        value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
-                        onKeyDown={handleKeyPress}
-                        className="w-full px-4 md:px-5 py-2.5 md:py-3 rounded-full bg-gray-100 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={handleMediaSelect}
+                        className="hidden"
                       />
-                      <button className="absolute right-3 top-2 p-1 rounded-full hover:bg-gray-200 text-gray-400 transition-colors">
-                        <span className="text-lg">😊</span>
+
+                      <div className="flex-1 relative">
+                        <input
+                          type="text"
+                          placeholder="Type a message..."
+                          value={inputText}
+                          onChange={(e) => setInputText(e.target.value)}
+                          onKeyDown={handleKeyPress}
+                          className="w-full px-4 md:px-5 py-2.5 md:py-3 pr-12 rounded-full bg-gray-100 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent text-sm"
+                        />
+                        {/* Emoji Button */}
+                        <button
+                          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-gray-200 text-gray-400 transition-colors"
+                          title="Add emoji"
+                        >
+                          <span className="text-lg">😊</span>
+                        </button>
+                      </div>
+
+                      {/* Send Button */}
+                      <button
+                        onClick={sendMessage}
+                        disabled={!inputText.trim() && !mediaPreview}
+                        className="p-2.5 md:p-3 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                        </svg>
                       </button>
                     </div>
-                    <button
-                      onClick={sendMessage}
-                      disabled={!inputText.trim()}
-                      className="p-2.5 md:p-3 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                      </svg>
-                    </button>
+
+                    {/* Emoji Picker */}
+                    {showEmojiPicker && (
+                      <div className="absolute bottom-20 left-4 right-4 md:left-auto md:right-auto md:w-96 bg-white rounded-2xl shadow-2xl border-2 border-indigo-200 z-50 max-h-80 overflow-hidden">
+                        <div className="p-3 border-b border-gray-200 bg-gradient-to-r from-indigo-500 to-purple-500">
+                          <h3 className="text-sm font-bold text-white text-center">Choose an emoji</h3>
+                        </div>
+                        <div className="overflow-y-auto max-h-64 p-3">
+                          {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
+                            <div key={category} className="mb-3">
+                              <p className="text-xs font-semibold text-gray-500 mb-2">{category}</p>
+                              <div className="grid grid-cols-8 gap-1">
+                                {emojis.map((emoji, idx) => (
+                                  <button
+                                    key={idx}
+                                    onClick={() => handleEmojiSelect(emoji)}
+                                    className="text-2xl p-1 hover:bg-gray-100 rounded transition-colors"
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -843,6 +1103,120 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
           </div>
         )}
       </div>
+
+      {/* Full-Screen Image Viewer with Zoom */}
+      {viewingImage && (
+        <div 
+          className="fixed inset-0 bg-black/95 z-[9999] flex flex-col"
+          onClick={closeImageViewer}
+        >
+          {/* Top Bar with Controls */}
+          <div className="flex items-center justify-between p-4 bg-black/50" onClick={(e) => e.stopPropagation()}>
+            <div className="text-white text-sm font-medium">
+              {Math.round(imageZoom * 100)}%
+            </div>
+            
+            <div className="flex items-center gap-2">
+              {/* Zoom Out Button */}
+              <button
+                onClick={handleZoomOut}
+                disabled={imageZoom <= 1}
+                className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+                title="Zoom Out"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                </svg>
+              </button>
+
+              {/* Reset Zoom Button */}
+              <button
+                onClick={handleResetZoom}
+                disabled={imageZoom === 1}
+                className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+                title="Reset Zoom"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+
+              {/* Zoom In Button */}
+              <button
+                onClick={handleZoomIn}
+                disabled={imageZoom >= 5}
+                className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-white transition-colors"
+                title="Zoom In"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+
+              {/* Download Button */}
+              <a
+                href={viewingImage}
+                download="image.png"
+                className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
+                title="Download Image"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </a>
+
+              {/* Close Button */}
+              <button
+                onClick={closeImageViewer}
+                className="p-2 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
+                title="Close"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Image Container */}
+          <div 
+            className="flex-1 flex items-center justify-center overflow-hidden relative"
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onClick={(e) => e.stopPropagation()}
+            style={{ cursor: imageZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+          >
+            <img 
+              src={viewingImage} 
+              alt="Full size" 
+              className="max-w-none transition-transform duration-200 ease-out select-none"
+              style={{
+                transform: `translate(${imagePosition.x}px, ${imagePosition.y}px) scale(${imageZoom})`,
+                maxWidth: '90vw',
+                maxHeight: '80vh',
+                objectFit: 'contain'
+              }}
+              draggable={false}
+            />
+          </div>
+
+          {/* Bottom Help Text */}
+          <div className="p-3 bg-black/50 text-center" onClick={(e) => e.stopPropagation()}>
+            <p className="text-white/70 text-xs">
+              {imageZoom > 1 
+                ? 'Drag to pan • Scroll to zoom • Click buttons to adjust'
+                : 'Click + or scroll up to zoom in • Click image controls above'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {showSettings && (
