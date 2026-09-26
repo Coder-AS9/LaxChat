@@ -5,7 +5,9 @@ export interface User {
   color: string;
   password: string;
   createdAt: number;
-  profileImage?: string; // base64 data URL for uploaded profile picture
+  profileImage?: string;
+  isOnline?: boolean;
+  lastSeen?: number;
 }
 
 export interface Message {
@@ -15,14 +17,18 @@ export interface Message {
   receiverId: string;
   timestamp: number;
   status: 'sent' | 'delivered' | 'seen';
+  isPinned?: boolean;
+  groupId?: string;
 }
 
 export interface ChatMessage {
   id: string;
   text: string;
   sender: 'me' | 'other';
+  senderName?: string;
   timestamp: number;
   status: 'sent' | 'delivered' | 'seen';
+  isPinned?: boolean;
 }
 
 export interface ChatRequest {
@@ -31,4 +37,27 @@ export interface ChatRequest {
   toUserId: string;
   status: 'pending' | 'accepted';
   timestamp: number;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  avatar?: string;
+  createdBy: string;
+  members: string[];
+  createdAt: number;
+}
+
+export interface TypingIndicator {
+  userId: string;
+  userName: string;
+  chatId: string;
+  isTyping: boolean;
+  timestamp: number;
+}
+
+export interface UserPresence {
+  userId: string;
+  isOnline: boolean;
+  lastSeen: number;
 }

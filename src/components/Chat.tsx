@@ -28,12 +28,17 @@ interface ChatProps {
   currentUser: User;
   onLogout: () => void;
   onUserUpdate: (user: User) => void;
+  initialView?: string;
+  initialData?: any;
+  onNavigate?: (view: string, data?: any) => void;
+  darkMode?: boolean;
+  toggleDarkMode?: () => void;
 }
 
-export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps) {
+export default function Chat({ currentUser, onLogout, onUserUpdate, initialView, initialData, onNavigate, darkMode, toggleDarkMode }: ChatProps) {
   const [contacts, setContacts] = useState<User[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [selectedContact, setSelectedContact] = useState<User | null>(null);
+  const [selectedContact, setSelectedContact] = useState<User | null>(initialData || null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,8 +57,11 @@ export default function Chat({ currentUser, onLogout, onUserUpdate }: ChatProps)
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingTimeoutRef = useRef<any>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

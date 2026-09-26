@@ -184,6 +184,8 @@ export async function addMessage(message: Omit<Message, 'id' | 'created_at'>): P
       receiver_id: message.receiverId,
       text: message.text,
       status: message.status,
+      is_pinned: message.isPinned || false,
+      group_id: message.groupId || null,
     })
     .select()
     .single();
@@ -352,6 +354,335 @@ export async function getPendingRequestsForUser(userId: string): Promise<ChatReq
 }
 
 // ============================================
+// GROUPS
+// ============================================
+
+export async function createGroup(name: string, createdBy: string, members: string[]): Promise<any | null> {
+  if (!checkSupabaseConfig()) return null;
+
+  const { data, error } = await supabase
+    .from('groups')
+    .insert({
+      name,
+      created_by: createdBy,
+      members,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating group:', error);
+    return null;
+  }
+
+  return data;
+}
+
+export async function getGroups(userId: string): Promise<any[]> {
+  if (!checkSupabaseConfig()) return [];
+
+  const { data, error } = await supabase
+    .from('groups')
+    .select('*')
+    .contains('members', [userId])
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching groups:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function addMemberToGroup(groupId: string, userId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { data: group, error: fetchError } = await supabase
+    .from('groups')
+    .select('members')
+    .eq('id', groupId)
+    .single();
+
+  if (fetchError || !group) return false;
+
+  const members = group.members || [];
+  if (members.includes(userId)) return true;
+
+  const { error } = await supabase
+    .from('groups')
+    .update({ members: [...members, userId] })
+    .eq('id', groupId);
+
+  if (error) {
+    console.error('Error adding member to group:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function removeMemberFromGroup(groupId: string, userId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { data: group, error: fetchError } = await supabase
+    .from('groups')
+    .select('members')
+    .eq('id', groupId)
+    .single();
+
+  if (fetchError || !group) return false;
+
+  const members = (group.members || []).filter((m: string) => m !== userId);
+
+  const { error } = await supabase
+    .from('groups')
+    .update({ members })
+    .eq('id', groupId);
+
+  if (error) {
+    console.error('Error removing member from group:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function getGroupMessages(groupId: string): Promise<Message[]> {
+  if (!checkSupabaseConfig()) return [];
+
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching group messages:', error);
+    return [];
+  }
+
+  return (data || []).map(mapMessageFromDB);
+}
+
+// ============================================
+// TYPING INDICATORS
+// ============================================
+
+export async function setTypingStatus(userId: string, chatId: string, isTyping: boolean): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { error } = await supabase
+    .from('typing_indicators')
+    .upsert({
+      user_id: userId,
+      chat_id: chatId,
+      is_typing: isTyping,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (error) {
+    console.error('Error setting typing status:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function getTypingUsers(chatId: string): Promise<any[]> {
+  if (!checkSupabaseConfig()) return [];
+
+  const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString();
+
+  const { data, error } = await supabase
+    .from('typing_indicators')
+    .select('*')
+    .eq('chat_id', chatId)
+    .eq('is_typing', true)
+    .gte('updated_at', fiveSecondsAgo);
+
+  if (error) {
+    console.error('Error fetching typing users:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// ============================================
+// ONLINE PRESENCE
+// ============================================
+
+export async function setUserPresence(userId: string, isOnline: boolean): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { error } = await supabase
+    .from('users')
+    .update({
+      is_online: isOnline,
+      last_seen: new Date().toISOString(),
+    })
+    .eq('id', userId);
+
+  if (error) {
+    console.error('Error setting user presence:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function getUserPresence(userId: string): Promise<{ isOnline: boolean; lastSeen: number } | null> {
+  if (!checkSupabaseConfig()) return null;
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('is_online, last_seen')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return {
+    isOnline: data.is_online || false,
+    lastSeen: data.last_seen ? new Date(data.last_seen).getTime() : 0,
+  };
+}
+
+// ============================================
+// PINNED MESSAGES
+// ============================================
+
+export async function pinMessage(messageId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { error } = await supabase
+    .from('messages')
+    .update({ is_pinned: true })
+    .eq('id', messageId);
+
+  if (error) {
+    console.error('Error pinning message:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function unpinMessage(messageId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { error } = await supabase
+    .from('messages')
+    .update({ is_pinned: false })
+    .eq('id', messageId);
+
+  if (error) {
+    console.error('Error unpinning message:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function getPinnedMessages(chatId: string): Promise<Message[]> {
+  if (!checkSupabaseConfig()) return [];
+
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('chat_id', chatId)
+    .eq('is_pinned', true)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching pinned messages:', error);
+    return [];
+  }
+
+  return (data || []).map(mapMessageFromDB);
+}
+
+// ============================================
+// FAVORITE CHATS
+// ============================================
+
+export async function addFavoriteChat(userId: string, chatId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { error } = await supabase
+    .from('favorite_chats')
+    .insert({
+      user_id: userId,
+      chat_id: chatId,
+    });
+
+  if (error) {
+    console.error('Error adding favorite chat:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function removeFavoriteChat(userId: string, chatId: string): Promise<boolean> {
+  if (!checkSupabaseConfig()) return false;
+
+  const { error } = await supabase
+    .from('favorite_chats')
+    .delete()
+    .eq('user_id', userId)
+    .eq('chat_id', chatId);
+
+  if (error) {
+    console.error('Error removing favorite chat:', error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function getFavoriteChats(userId: string): Promise<string[]> {
+  if (!checkSupabaseConfig()) return [];
+
+  const { data, error } = await supabase
+    .from('favorite_chats')
+    .select('chat_id')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Error fetching favorite chats:', error);
+    return [];
+  }
+
+  return (data || []).map((f: any) => f.chat_id);
+}
+
+// ============================================
+// MESSAGE SEARCH
+// ============================================
+
+export async function searchMessages(userId: string, query: string): Promise<Message[]> {
+  if (!checkSupabaseConfig()) return [];
+
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .or(`and(sender_id.eq.${userId},text.ilike.%${query}%),and(receiver_id.eq.${userId},text.ilike.%${query}%)`)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    console.error('Error searching messages:', error);
+    return [];
+  }
+
+  return (data || []).map(mapMessageFromDB);
+}
+
+// ============================================
 // REAL-TIME SUBSCRIPTIONS
 // ============================================
 
@@ -429,6 +760,8 @@ function mapUserFromDB(dbUser: any): User {
     password: dbUser.password,
     profileImage: dbUser.profile_image,
     createdAt: new Date(dbUser.created_at).getTime(),
+    isOnline: dbUser.is_online || false,
+    lastSeen: dbUser.last_seen ? new Date(dbUser.last_seen).getTime() : 0,
   };
 }
 
@@ -440,6 +773,8 @@ function mapMessageFromDB(dbMessage: any): Message {
     text: dbMessage.text,
     status: dbMessage.status,
     timestamp: new Date(dbMessage.created_at).getTime(),
+    isPinned: dbMessage.is_pinned || false,
+    groupId: dbMessage.group_id || null,
   };
 }
 

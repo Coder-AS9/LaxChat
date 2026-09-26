@@ -1,43 +1,92 @@
 import { useState, useEffect } from 'react';
 import { User } from './types';
 import { isSupabaseConfigured } from './utils/supabase';
+import { setUserPresence } from './utils/storage';
 import Login from './components/Login';
 import Chat from './components/Chat';
+import Dashboard from './components/Dashboard';
 
 // Simple session storage for current user (just for this browser session)
 const SESSION_KEY = 'laxchat_session';
+const THEME_KEY = 'laxchat_theme';
 
 export default function App() {
   const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [currentView, setCurrentView] = useState<'dashboard' | 'chat' | 'find-users' | 'create-group' | 'search' | 'favorites' | 'group-chat'>('dashboard');
+  const [viewData, setViewData] = useState<any>(null);
+  const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
+    // Load theme
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme === 'dark') {
+      setDarkMode(true);
+      document.documentElement.classList.add('dark');
+    }
+
     // Load user from session storage
     const sessionData = sessionStorage.getItem(SESSION_KEY);
     if (sessionData) {
       try {
         const user = JSON.parse(sessionData);
         setCurrentUserState(user);
+        // Set user as online
+        setUserPresence(user.id, true);
       } catch (e) {
         console.error('Error parsing session:', e);
       }
     }
     setLoading(false);
+
+    // Set user offline when tab closes
+    const handleBeforeUnload = () => {
+      if (currentUser) {
+        setUserPresence(currentUser.id, false);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
   }, []);
+
+  const toggleDarkMode = () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    localStorage.setItem(THEME_KEY, newMode ? 'dark' : 'light');
+    if (newMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
 
   const handleLogin = (user: User) => {
     setCurrentUserState(user);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    setUserPresence(user.id, true);
+    setCurrentView('dashboard');
   };
 
   const handleLogout = () => {
+    if (currentUser) {
+      setUserPresence(currentUser.id, false);
+    }
     setCurrentUserState(null);
     sessionStorage.removeItem(SESSION_KEY);
+    setCurrentView('dashboard');
   };
 
   const handleUserUpdate = (user: User) => {
     setCurrentUserState(user);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  };
+
+  const handleNavigate = (view: string, data?: any) => {
+    setCurrentView(view as any);
+    setViewData(data || null);
   };
 
   if (loading) {
@@ -116,7 +165,39 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  return (
-    <Chat currentUser={currentUser} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />
-  );
+  // Render based on current view
+  if (currentView === 'dashboard') {
+    return (
+      <div className={darkMode ? 'dark' : ''}>
+        <Dashboard currentUser={currentUser} onNavigate={handleNavigate} />
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleDarkMode}
+          className="fixed bottom-6 right-6 p-4 bg-white dark:bg-gray-800 rounded-full shadow-lg hover:shadow-xl transition-all z-50"
+          title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+        >
+          <span className="text-2xl">{darkMode ? '☀️' : '🌙'}</span>
+        </button>
+      </div>
+    );
+  }
+
+  if (currentView === 'chat' || currentView === 'find-users' || currentView === 'create-group' || currentView === 'search' || currentView === 'favorites' || currentView === 'group-chat') {
+    return (
+      <div className={darkMode ? 'dark' : ''}>
+        <Chat
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          onUserUpdate={handleUserUpdate}
+          initialView={currentView}
+          initialData={viewData}
+          onNavigate={handleNavigate}
+          darkMode={darkMode}
+          toggleDarkMode={toggleDarkMode}
+        />
+      </div>
+    );
+  }
+
+  return null;
 }
